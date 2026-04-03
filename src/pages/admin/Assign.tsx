@@ -31,6 +31,29 @@ import {
 import { toast } from 'sonner';
 import { jsonRequest } from '@/lib/mutations';
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
+const syncOrder = (currentOrder: number[], items: Array<{ id: number }>) => {
+  const ids = items.map((item) => item.id);
+  const seen = new Set<number>();
+  const orderedExisting = currentOrder.filter((id) => ids.includes(id) && !seen.has(id) && (seen.add(id), true));
+  const appendedNew = ids.filter((id) => !orderedExisting.includes(id));
+  return [...orderedExisting, ...appendedNew];
+};
+
+const moveIdsToBottom = (currentOrder: number[], idsToMove: number[]) => {
+  const selected = currentOrder.filter((id) => idsToMove.includes(id));
+  const remaining = currentOrder.filter((id) => !idsToMove.includes(id));
+  return [...remaining, ...selected];
+};
+
+const isAssignedItem = (item: {
+  assignedToId?: number | null;
+  teamLeaderId?: number | null;
+  assignedTo?: string | null;
+  teamLeader?: string | null;
+}) => Boolean(item.assignedToId || item.teamLeaderId || item.assignedTo || item.teamLeader);
+
 export default function AdminAssign() {
   const { leads, setLeads, coldCalls, setColdCalls, users, statuses, projects } = useData();
   const [activeTab, setActiveTab] = useState('leads');
@@ -38,10 +61,26 @@ export default function AdminAssign() {
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
   const [selectedTeamLeader, setSelectedTeamLeader] = useState<string>('');
   const [filterAssignedTeamLeader, setFilterAssignedTeamLeader] = useState<string>('all');
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [leadOrder, setLeadOrder] = useState<number[]>([]);
+  const [coldCallOrder, setColdCallOrder] = useState<number[]>([]);
 
   useEffect(() => {
     setSelectedItems([]);
   }, [activeTab]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchTerm, filterAssignedTeamLeader, pageSize]);
+
+  useEffect(() => {
+    setLeadOrder((prev) => syncOrder(prev, leads));
+  }, [leads]);
+
+  useEffect(() => {
+    setColdCallOrder((prev) => syncOrder(prev, coldCalls));
+  }, [coldCalls]);
 
   // Get assignment targets
   const directorsAndSalesManagers = users.filter(
@@ -50,9 +89,21 @@ export default function AdminAssign() {
 
   // Get items based on active tab
   const items = activeTab === 'leads' ? leads : coldCalls;
+  const itemOrder = activeTab === 'leads' ? leadOrder : coldCallOrder;
+  const orderIndex = new Map(itemOrder.map((id, index) => [id, index]));
+  const orderedItems = [...items].sort((a, b) => {
+    const aAssigned = isAssignedItem(a);
+    const bAssigned = isAssignedItem(b);
+    if (aAssigned !== bAssigned) return aAssigned ? 1 : -1;
+
+    const aIndex = orderIndex.has(a.id) ? orderIndex.get(a.id)! : Number.MAX_SAFE_INTEGER;
+    const bIndex = orderIndex.has(b.id) ? orderIndex.get(b.id)! : Number.MAX_SAFE_INTEGER;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return a.id - b.id;
+  });
 
   // Filter items
-  const filteredItems = items.filter(item => {
+  const filteredItems = orderedItems.filter(item => {
     const matchesAssignedTeamLeader =
       filterAssignedTeamLeader === 'all' ||
       (item.teamLeaderId && item.teamLeaderId.toString() === filterAssignedTeamLeader);
@@ -63,6 +114,10 @@ export default function AdminAssign() {
     );
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const currentPageItems = filteredItems.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+
   const toggleItemSelection = (itemId: number) => {
     setSelectedItems(prev => 
       prev.includes(itemId) 
@@ -72,10 +127,10 @@ export default function AdminAssign() {
   };
 
   const toggleAllSelection = () => {
-    if (selectedItems.length === filteredItems.length) {
+    if (selectedItems.length === currentPageItems.length && currentPageItems.length > 0) {
       setSelectedItems([]);
     } else {
-      setSelectedItems(filteredItems.map(item => item.id));
+      setSelectedItems(currentPageItems.map(item => item.id));
     }
   };
 
@@ -111,6 +166,7 @@ export default function AdminAssign() {
               : item
           )
         );
+        setLeadOrder((prev) => moveIdsToBottom(prev, selectedItems));
       } else {
         setColdCalls(prev =>
           prev.map(item =>
@@ -119,11 +175,11 @@ export default function AdminAssign() {
               : item
           )
         );
+        setColdCallOrder((prev) => moveIdsToBottom(prev, selectedItems));
       }
 
       toast.success(`Assigned ${selectedItems.length} ${activeTab} to ${targetUser.name}`);
       setSelectedItems([]);
-      setFilterAssignedTeamLeader(selectedTeamLeader);
       setSelectedTeamLeader('');
     } catch (error) {
       toast.error((error as Error).message);
@@ -188,6 +244,28 @@ export default function AdminAssign() {
           {/* Assignment Controls */}
           <Card>
             <CardContent className="p-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-500">
+                    Show
+                  </span>
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <Button
+                      key={size}
+                      type="button"
+                      variant={pageSize === size ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setPageSize(size)}
+                      className="h-9 min-w-12 px-3"
+                    >
+                      {size}
+                    </Button>
+                  ))}
+                  <span className="text-sm text-gray-500">
+                    entries
+                  </span>
+                </div>
+
               <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">
@@ -246,6 +324,7 @@ export default function AdminAssign() {
                   />
                 </div>
               </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -271,7 +350,7 @@ export default function AdminAssign() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredItems.map((lead) => (
+                    {currentPageItems.map((lead) => (
                       <TableRow key={lead.id}>
                         <TableCell>
                           <Checkbox 
@@ -309,11 +388,37 @@ export default function AdminAssign() {
                             </SelectContent>
                           </Select>
                         </TableCell>
-                        <TableCell>{lead.assignedTo || 'Unassigned'}</TableCell>
+                        <TableCell>{lead.assignedTo || '-'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+              </div>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 border-t">
+                <p className="text-sm text-gray-500">
+                  Showing {(safeCurrentPage - 1) * pageSize + 1} to{' '}
+                  {Math.min(safeCurrentPage * pageSize, filteredItems.length)} of {filteredItems.length} entries
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={safeCurrentPage === 1}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    disabled={safeCurrentPage === totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -323,6 +428,28 @@ export default function AdminAssign() {
           {/* Assignment Controls */}
           <Card>
             <CardContent className="p-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-500">
+                    Show
+                  </span>
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <Button
+                      key={size}
+                      type="button"
+                      variant={pageSize === size ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setPageSize(size)}
+                      className="h-9 min-w-12 px-3"
+                    >
+                      {size}
+                    </Button>
+                  ))}
+                  <span className="text-sm text-gray-500">
+                    entries
+                  </span>
+                </div>
+
               <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">
@@ -381,6 +508,7 @@ export default function AdminAssign() {
                   />
                 </div>
               </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -407,7 +535,7 @@ export default function AdminAssign() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredItems.map((call) => (
+                    {currentPageItems.map((call) => (
                       <TableRow key={call.id}>
                         <TableCell>
                           <Checkbox 
@@ -445,12 +573,38 @@ export default function AdminAssign() {
                             </SelectContent>
                           </Select>
                         </TableCell>
-                        <TableCell>{call.assignedTo || 'Unassigned'}</TableCell>
-                        <TableCell>{call.teamLeader || 'Unassigned'}</TableCell>
+                        <TableCell>{call.assignedTo || '-'}</TableCell>
+                        <TableCell>{call.teamLeader || '-'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+              </div>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 border-t">
+                <p className="text-sm text-gray-500">
+                  Showing {(safeCurrentPage - 1) * pageSize + 1} to{' '}
+                  {Math.min(safeCurrentPage * pageSize, filteredItems.length)} of {filteredItems.length} entries
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={safeCurrentPage === 1}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    disabled={safeCurrentPage === totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

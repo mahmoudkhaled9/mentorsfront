@@ -289,6 +289,8 @@ export default function Leads() {
           phone: newLeadPhone.trim(),
           statusId: statusObj?.id ?? 0,
           projectId: project?.id,
+          assignedToId: null,
+          teamLeaderId: null,
           date: new Date().toISOString().split('T')[0],
         },
       });

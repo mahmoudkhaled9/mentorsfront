@@ -284,6 +284,8 @@ export default function ColdCalls() {
           name: newCallName.trim(),
           phone: newCallPhone.trim(),
           statusId: statusObj?.id ?? 0,
+          assignedToId: null,
+          teamLeaderId: null,
           date: new Date().toISOString().split('T')[0],
         },
       });

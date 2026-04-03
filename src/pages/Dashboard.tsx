@@ -81,7 +81,7 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome back, {user?.name}! last update was 2 mins ago
+          Welcome back, {user?.name}!
         </h1>
         <p className="text-gray-500 mt-1">
           Here's what's happening in your CRM today

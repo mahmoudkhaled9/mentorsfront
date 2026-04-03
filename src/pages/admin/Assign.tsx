@@ -181,6 +181,8 @@ export default function AdminAssign() {
       toast.success(`Assigned ${selectedItems.length} ${activeTab} to ${targetUser.name}`);
       setSelectedItems([]);
       setSelectedTeamLeader('');
+      setFilterAssignedTeamLeader('all');
+      setCurrentPage(1);
     } catch (error) {
       toast.error((error as Error).message);
     }

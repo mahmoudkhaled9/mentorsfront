@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useData } from '@/contexts/DataContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,11 +50,12 @@ const normalizePhone = (value: string) => value.replace(/\D/g, '');
 const phoneRegex = /(\+?\d[\d\s\-()]{6,}\d)/g;
 
 export default function UploadData() {
-  const { leads, setLeads, coldCalls, setColdCalls, statuses, users, projects, setProjects, developers } = useData();
+  const { leads, setLeads, coldCalls, setColdCalls, statuses, projects, setProjects, developers } = useData();
   const [importTarget, setImportTarget] = useState<ImportTarget>('leads');
   const [file, setFile] = useState<File | null>(null);
   const [stats, setStats] = useState<ImportStats | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const defaultStatus = statuses.find(s => s.name === 'New Lead')?.name || statuses[0]?.name || 'New Lead';
 
@@ -62,12 +63,6 @@ export default function UploadData() {
     if (!value) return defaultStatus;
     const normalized = value.trim().toLowerCase();
     return statuses.find(s => s.name.toLowerCase() === normalized)?.name || defaultStatus;
-  };
-
-  const findAssignee = (value?: string) => {
-    if (!value) return undefined;
-    const normalized = value.trim().toLowerCase();
-    return users.find(u => u.name.toLowerCase() === normalized);
   };
 
   const buildUploadRowsFromSheet = (rows: unknown[][]) => {
@@ -85,8 +80,6 @@ export default function UploadData() {
       ['project', 'projectname', 'projecttitle', 'projectnames', 'projectnameen', 'projectnamear'].includes(h) ||
       h.includes('project')
     );
-    const assignedIndex = headers.findIndex(h => ['assignedto', 'assignee'].includes(h));
-
     const result: UploadRow[] = [];
     for (let i = 1; i < rows.length; i += 1) {
       const row = rows[i];
@@ -100,7 +93,6 @@ export default function UploadData() {
         name: nameIndex >= 0 ? String(row[nameIndex] ?? '').trim() : undefined,
         status: statusIndex >= 0 ? String(row[statusIndex] ?? '').trim() : undefined,
         project: projectIndex >= 0 ? String(row[projectIndex] ?? '').trim() : undefined,
-        assignedTo: assignedIndex >= 0 ? String(row[assignedIndex] ?? '').trim() : undefined,
       });
     }
     return { rows: result, totalRows: rows.length - 1 };
@@ -179,7 +171,6 @@ export default function UploadData() {
     const newItems = validRows.map(row => {
       const statusName = findStatus(row.status);
       const statusObj = statuses.find(s => s.name === statusName);
-      const assignee = findAssignee(row.assignedTo);
       const projectObj = resolveProject(row.project);
       const isPotential =
         statusName.toLowerCase().includes('potential') &&
@@ -194,8 +185,8 @@ export default function UploadData() {
         statusId: statusObj?.id ?? 0,
         project: projectObj?.name,
         projectId: projectObj?.id,
-        assignedTo: assignee?.name,
-        assignedToId: assignee?.id,
+        assignedTo: undefined,
+        assignedToId: undefined,
         date: new Date().toISOString().split('T')[0],
         isPotential,
       };
@@ -204,17 +195,15 @@ export default function UploadData() {
 
     try {
       if (addedProjects.length > 0) {
-        await Promise.all(
-          addedProjects.map((project) =>
-            jsonRequest('projects', {
-              method: 'POST',
-              body: {
-                name: project.name,
-                developerId: project.developerId,
-              },
-            })
-          )
-        );
+        for (const project of addedProjects) {
+          await jsonRequest('projects', {
+            method: 'POST',
+            body: {
+              name: project.name,
+              developerId: project.developerId,
+            },
+          });
+        }
         setProjects(prev => [...prev, ...addedProjects]);
       }
 
@@ -324,16 +313,20 @@ export default function UploadData() {
 
           <div className="flex flex-col gap-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 sm:flex-row sm:items-center">
             <Input
-              id="upload-data-file"
+              ref={fileInputRef}
               type="file"
+              id="upload-data-file"
               accept=".xlsx,.xls,.csv,.pdf"
               className="hidden"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
-            <Button asChild variant="outline" className="w-full sm:w-auto">
-              <label htmlFor="upload-data-file" className="cursor-pointer">
-                Choose File
-              </label>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Choose File
             </Button>
             <div className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2 text-sm text-gray-600">
               <span className="block truncate">

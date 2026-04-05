@@ -332,7 +332,7 @@ export default function Deals() {
                 Add Deal
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]">
               <DialogHeader>
                 <DialogTitle>Add New Deal</DialogTitle>
               </DialogHeader>

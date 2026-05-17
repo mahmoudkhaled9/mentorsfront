@@ -37,7 +37,7 @@ type UploadRow = {
   assignedTo?: string;
 };
 
-const MAX_ROWS = 2000;
+const MAX_ROWS = 5000;
 
 const normalizeHeader = (value: unknown) =>
   String(value || '')
@@ -368,7 +368,7 @@ export default function UploadData() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-amber-800 space-y-2">
-            <p>Max 2000 rows per upload.</p>
+            <p>Max 5000 rows per upload.</p>
             <p>Duplicate phone numbers are removed automatically.</p>
             <p>PDF imports extract phone numbers only.</p>
           </CardContent>

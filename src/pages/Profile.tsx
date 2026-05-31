@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 export default function Profile() {
   const { user } = useAuth();
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [avatar, setAvatar] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -23,6 +24,7 @@ export default function Profile() {
 
   useEffect(() => {
     setName(user?.name ?? '');
+    setEmail(user?.email ?? '');
     setPhone(user?.phone ?? '');
     setAvatar(user?.avatar ?? '');
     setSelectedAvatarName('');
@@ -84,8 +86,8 @@ export default function Profile() {
   };
 
   const handleSaveProfile = async () => {
-    if (!name.trim() || !phone.trim()) {
-      toast.error('Name and phone are required');
+    if (!name.trim() || !phone.trim() || !email.trim()) {
+      toast.error('Name, email, and phone are required');
       return;
     }
     setSavingProfile(true);
@@ -94,7 +96,9 @@ export default function Profile() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: user?.id,
           name: name.trim(),
+          email: email.trim(),
           phone: phone.trim(),
           avatar: avatar.trim(),
         }),
@@ -164,8 +168,9 @@ export default function Profile() {
           <CardTitle>Profile</CardTitle>
           <CardDescription>Update your visible account information.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
+        <CardContent>
+          <form action={`/profile/${user?.id ?? ''}`} onSubmit={(e) => { e.preventDefault(); handleSaveProfile(); }} className="space-y-4">
+            <div className="flex items-center gap-4">
             <Avatar className="h-16 w-16">
               <AvatarImage src={avatar || undefined} alt={user?.name ?? 'User'} />
               <AvatarFallback>{(user?.name ?? 'U').slice(0, 1).toUpperCase()}</AvatarFallback>
@@ -207,6 +212,14 @@ export default function Profile() {
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
+              <Label htmlFor="id">User ID</Label>
+              <Input id="id" value={user?.id ?? ''} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="name">Name</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
@@ -215,9 +228,10 @@ export default function Profile() {
               <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
           </div>
-          <Button onClick={handleSaveProfile} disabled={savingProfile}>
-            {savingProfile ? 'Saving...' : 'Save Profile'}
-          </Button>
+            <Button type="submit" disabled={savingProfile}>
+              {savingProfile ? 'Saving...' : 'Save Profile'}
+            </Button>
+          </form>
         </CardContent>
       </Card>
 

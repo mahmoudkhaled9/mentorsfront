@@ -276,6 +276,13 @@ export default function ColdCalls() {
     const isPotential =
       newCallStatus.toLowerCase().includes('potential') &&
       !newCallStatus.toLowerCase().includes('non');
+    const currentAssignee = user && user.role !== 'admin' && user.role !== 'franchise_owner' ? user : null;
+    const currentTeamLeaderId = currentAssignee
+      ? (currentAssignee.role === 'team_leader' ? currentAssignee.id : currentAssignee.teamLeaderId)
+      : undefined;
+    const currentTeamLeader = currentTeamLeaderId
+      ? users.find(u => u.id === currentTeamLeaderId)
+      : undefined;
 
     try {
       const created = await jsonRequest<{ ok: boolean; id?: number }>('cold-calls', {
@@ -284,8 +291,8 @@ export default function ColdCalls() {
           name: newCallName.trim(),
           phone: newCallPhone.trim(),
           statusId: statusObj?.id ?? 0,
-          assignedToId: null,
-          teamLeaderId: null,
+          assignedToId: currentAssignee?.id ?? null,
+          teamLeaderId: currentTeamLeaderId ?? null,
           date: new Date().toISOString().split('T')[0],
         },
       });
@@ -300,6 +307,10 @@ export default function ColdCalls() {
           phone: newCallPhone.trim(),
           status: newCallStatus,
           statusId: statusObj?.id ?? 0,
+          assignedTo: currentAssignee?.name,
+          assignedToId: currentAssignee?.id,
+          teamLeader: currentTeamLeader?.name,
+          teamLeaderId: currentTeamLeaderId,
           date: new Date().toISOString().split('T')[0],
           isPotential,
         },

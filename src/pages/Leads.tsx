@@ -280,6 +280,13 @@ export default function Leads() {
       newLeadStatus.toLowerCase().includes('potential') &&
       !newLeadStatus.toLowerCase().includes('non');
     const project = projects.find(p => p.id.toString() === newLeadProjectId);
+    const currentAssignee = user && user.role !== 'admin' && user.role !== 'franchise_owner' ? user : null;
+    const currentTeamLeaderId = currentAssignee
+      ? (currentAssignee.role === 'team_leader' ? currentAssignee.id : currentAssignee.teamLeaderId)
+      : undefined;
+    const currentTeamLeader = currentTeamLeaderId
+      ? users.find(u => u.id === currentTeamLeaderId)
+      : undefined;
 
     try {
       const created = await jsonRequest<{ ok: boolean; id?: number }>('leads', {
@@ -289,8 +296,8 @@ export default function Leads() {
           phone: newLeadPhone.trim(),
           statusId: statusObj?.id ?? 0,
           projectId: project?.id,
-          assignedToId: null,
-          teamLeaderId: null,
+          assignedToId: currentAssignee?.id ?? null,
+          teamLeaderId: currentTeamLeaderId ?? null,
           date: new Date().toISOString().split('T')[0],
         },
       });
@@ -306,6 +313,10 @@ export default function Leads() {
           statusId: statusObj?.id ?? 0,
           project: project?.name,
           projectId: project?.id,
+          assignedTo: currentAssignee?.name,
+          assignedToId: currentAssignee?.id,
+          teamLeader: currentTeamLeader?.name,
+          teamLeaderId: currentTeamLeaderId,
           date: new Date().toISOString().split('T')[0],
           isPotential,
         },

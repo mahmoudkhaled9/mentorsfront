@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, updateCurrentUser } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -108,8 +108,12 @@ export default function Profile() {
         throw new Error(payload.error ?? 'Failed to update profile');
       }
       const payload = await response.json();
-      if (typeof window !== 'undefined' && payload?.user) {
-        window.localStorage.setItem('tcrs_auth_user', JSON.stringify(payload.user));
+      const nextUser = payload?.user ?? user ?? null;
+      if (nextUser) {
+        updateCurrentUser({
+          ...(user ?? {}),
+          ...nextUser,
+        });
       }
       emitAuthChange();
       toast.success('Profile updated');

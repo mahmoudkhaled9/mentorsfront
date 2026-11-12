@@ -13,6 +13,7 @@ import type {
   AgentCare 
 } from '@/types';
 import { apiFetch, emitAuthChange, getApiBase, getAuthToken } from '@/lib/api';
+import { AUTH_TOKEN_KEY, AUTH_USER_KEY, clearLegacyAuthStorage } from '@/lib/api';
 import {
   users as initialUsers,
   titles as initialTitles,
@@ -107,15 +108,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const storedUser = window.localStorage.getItem('tcrs_auth_user');
+      const storedUser = window.localStorage.getItem(AUTH_USER_KEY);
       if (storedUser && hasApiBase) {
         const parsed = JSON.parse(storedUser) as User;
         if (!parsed?.email) {
-          window.localStorage.removeItem('tcrs_auth_user');
+          window.localStorage.removeItem(AUTH_USER_KEY);
+          clearLegacyAuthStorage();
         }
       }
     } catch {
-      window.localStorage.removeItem('tcrs_auth_user');
+      window.localStorage.removeItem(AUTH_USER_KEY);
+      clearLegacyAuthStorage();
     }
   }, [hasApiBase]);
 
@@ -214,7 +217,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         if (String((error as Error)?.message ?? '').toLowerCase().includes('unauthorized')) {
           if (!cancelled && typeof window !== 'undefined') {
-            window.localStorage.removeItem('mentors_auth_token');
+            window.localStorage.removeItem(AUTH_TOKEN_KEY);
+            window.localStorage.removeItem(AUTH_USER_KEY);
+            clearLegacyAuthStorage();
             emitAuthChange();
           }
           return;

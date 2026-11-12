@@ -1,13 +1,13 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { User, UserRole } from '@/types';
-import { apiFetch, emitAuthChange, getAuthToken } from '@/lib/api';
-import { users } from '@/data/mockData';
+import { apiFetch, emitAuthChange, getAuthToken, AUTH_TOKEN_KEY, AUTH_USER_KEY, clearLegacyAuthStorage } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
+  updateCurrentUser: (nextUser: User | null) => void;
   hasRole: (roles: UserRole[]) => boolean;
   isAdmin: boolean;
   isAgent: boolean;
@@ -22,7 +22,7 @@ const readStoredUser = (): User | null => {
     return null;
   }
   try {
-    const stored = window.localStorage.getItem('tcrs_auth_user');
+    const stored = window.localStorage.getItem(AUTH_USER_KEY);
     return stored ? (JSON.parse(stored) as User) : null;
   } catch {
     return null;
@@ -35,6 +35,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedToken = getAuthToken();
     return storedToken ? readStoredUser() : null;
   });
+
+  const updateCurrentUser = useCallback((nextUser: User | null) => {
+    setUser((currentUser) => {
+      const mergedUser = nextUser ? { ...(currentUser ?? {}), ...nextUser } : null;
+
+      if (typeof window !== 'undefined') {
+        if (mergedUser) {
+          window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(mergedUser));
+        } else {
+          window.localStorage.removeItem(AUTH_USER_KEY);
+        }
+        emitAuthChange();
+      }
+
+      return mergedUser;
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -59,12 +76,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       if (!token) {
-        window.localStorage.removeItem('tcrs_auth_user');
+        window.localStorage.removeItem(AUTH_USER_KEY);
+        clearLegacyAuthStorage();
       }
       if (token) {
-        window.localStorage.setItem('mentors_auth_token', token);
+        window.localStorage.setItem(AUTH_TOKEN_KEY, token);
       } else {
-        window.localStorage.removeItem('mentors_auth_token');
+        window.localStorage.removeItem(AUTH_TOKEN_KEY);
       }
       emitAuthChange();
     } catch {
@@ -78,9 +96,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       if (user) {
-        window.localStorage.setItem('tcrs_auth_user', JSON.stringify(user));
+        window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
       } else {
-        window.localStorage.removeItem('tcrs_auth_user');
+        window.localStorage.removeItem(AUTH_USER_KEY);
       }
     } catch {
       // Ignore storage errors
@@ -101,16 +119,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             Authorization: `Bearer ${token}`,
           },
         });
+
         if (!response.ok) {
-          throw new Error('Session not found');
+          if (response.status === 401 || response.status === 403) {
+            throw Object.assign(new Error('Session not found'), { status: response.status });
+          }
+          return;
         }
+
         const payload = await response.json();
-        if (!cancelled) {
-          setUser(payload.user ?? null);
+        const nextUser = payload?.user ?? payload ?? null;
+        if (!cancelled && nextUser) {
+          setUser(nextUser);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
+          const status = (error as { status?: number } | undefined)?.status;
+          if (status !== undefined && status !== 401 && status !== 403) {
+            return;
+          }
+          setToken('');
           setUser(null);
+          if (typeof window !== 'undefined') {
+            window.localStorage.removeItem(AUTH_TOKEN_KEY);
+            window.localStorage.removeItem(AUTH_USER_KEY);
+            clearLegacyAuthStorage();
+            emitAuthChange();
+          }
         }
       }
     };
@@ -120,21 +155,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-    }, [token]);
+  }, [token]);
 
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
       const normalizedEmail = email.trim().toLowerCase();
-
-      const mockUser = users.find(
-        (userItem) => userItem.email.toLowerCase() === normalizedEmail && userItem.password === password
-      );
-
-      if (mockUser) {
-        setToken('demo-token');
-        setUser(mockUser);
-        return true;
-      }
 
       const response = await apiFetch('auth/login', {
         method: 'POST',
@@ -152,9 +177,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const payload = await response.json();
-      if (payload?.token && payload?.user) {
-        setToken(String(payload.token));
-        setUser(payload.user as User);
+      const userFromResponse = payload?.user ?? null;
+      const tokenFromResponse = payload?.token ?? '';
+
+      if (tokenFromResponse && userFromResponse) {
+        setToken(String(tokenFromResponse));
+        setUser(userFromResponse as User);
         return true;
       }
       return false;
@@ -166,6 +194,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setToken('');
     setUser(null);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      window.localStorage.removeItem(AUTH_USER_KEY);
+      clearLegacyAuthStorage();
+      emitAuthChange();
+    }
   }, []);
 
   const hasRole = useCallback((roles: UserRole[]): boolean => {
@@ -186,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated,
         login,
         logout,
+        updateCurrentUser,
         hasRole,
         isAdmin,
         isAgent,

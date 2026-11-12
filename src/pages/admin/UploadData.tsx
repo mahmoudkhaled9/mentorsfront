@@ -37,17 +37,94 @@ type UploadRow = {
   assignedTo?: string;
 };
 
-const MAX_ROWS = 5000;
+const MAX_ROWS = 10000;
+
+const phoneAliases = [
+  'phone',
+  'mobile',
+  'mobilenumber',
+  'telephone',
+  'tel',
+  'contactnumber',
+  'contactno',
+  'cell',
+  'cellphone',
+  'whatsapp',
+  'whatsappnumber',
+  'phone1',
+  'phone2',
+  'number',
+  'phonenumber',
+  'contact',
+  'mob',
+  'mobilephone',
+  'contactmobile',
+];
+
+const nameAliases = [
+  'name',
+  'fullname',
+  'clientname',
+  'customername',
+  'leadname',
+  'contactname',
+  'personname',
+  'customer',
+  'client',
+  'firstname',
+  'lastname',
+  'fullnameen',
+  'fullnamear',
+  'nameen',
+  'namear',
+  'اسم',
+  'اسمالعميل',
+  'اسمالزبون',
+  'contactperson',
+  'fullName',
+  'firstName',
+  'lastName',
+];
 
 const normalizeHeader = (value: unknown) =>
-  String(value || '')
+  String(value ?? '')
     .trim()
     .toLowerCase()
-    .replace(/[\s_]/g, '');
+    .replace(/[^a-z0-9]/g, '');
 
-const normalizePhone = (value: string) => value.replace(/\D/g, '');
+const normalizePhone = (value: string) => {
+  if (!value) return '';
 
-const phoneRegex = /(\+?\d[\d\s\-()]{6,}\d)/g;
+  const cleaned = String(value).trim();
+  if (!cleaned) return '';
+
+  const digits = cleaned.replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.length >= 9 && digits.length <= 15) {
+    return digits.startsWith('0') ? digits : `+${digits}`;
+  }
+
+  return '';
+};
+
+const phoneRegex = /(?:\+?\d[\d\s().-]{6,}\d)/g;
+
+const pickPhoneValue = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+
+  const text = String(value).trim();
+  if (!text) return '';
+
+  const extracted = text.match(phoneRegex);
+  const candidate = extracted ? extracted[0] : text;
+  return normalizePhone(candidate);
+};
+
+const pickNameValue = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+};
 
 export default function UploadData() {
   const { leads, setLeads, coldCalls, setColdCalls, statuses, projects, setProjects, developers } = useData();
@@ -69,32 +146,42 @@ export default function UploadData() {
     if (rows.length <= 1) {
       return { rows: [], totalRows: 0, error: 'No data rows found' };
     }
+
     const headers = rows[0].map(normalizeHeader);
-    const phoneIndex = headers.findIndex(h => ['phone', 'mobile', 'phonenumber'].includes(h));
+    const phoneIndex = headers.findIndex((header) =>
+      phoneAliases.some((alias) => header.includes(alias) || alias.includes(header))
+    );
+
     if (phoneIndex === -1) {
       return { rows: [], totalRows: rows.length - 1, error: 'Phone column not found' };
     }
-    const nameIndex = headers.findIndex(h => ['name', 'fullname', 'clientname'].includes(h));
-    const statusIndex = headers.findIndex(h => ['status'].includes(h));
-    const projectIndex = headers.findIndex(h =>
-      ['project', 'projectname', 'projecttitle', 'projectnames', 'projectnameen', 'projectnamear'].includes(h) ||
-      h.includes('project')
+
+    const nameIndex = headers.findIndex((header) =>
+      nameAliases.some((alias) => header.includes(alias) || alias.includes(header))
     );
+
+    const statusIndex = headers.findIndex((header) => header.includes('status'));
+    const projectIndex = headers.findIndex((header) =>
+      header.includes('project') || header.includes('compound')
+    );
+
     const result: UploadRow[] = [];
     for (let i = 1; i < rows.length; i += 1) {
       const row = rows[i];
-      const phone = String(row[phoneIndex] ?? '').trim();
+      const phone = pickPhoneValue(row[phoneIndex]);
       if (!phone) {
         result.push({ phone: '' });
         continue;
       }
+
       result.push({
         phone,
-        name: nameIndex >= 0 ? String(row[nameIndex] ?? '').trim() : undefined,
+        name: nameIndex >= 0 ? pickNameValue(row[nameIndex]) : undefined,
         status: statusIndex >= 0 ? String(row[statusIndex] ?? '').trim() : undefined,
         project: projectIndex >= 0 ? String(row[projectIndex] ?? '').trim() : undefined,
       });
     }
+
     return { rows: result, totalRows: rows.length - 1 };
   };
 
@@ -257,7 +344,7 @@ export default function UploadData() {
           return;
         }
         const rows: UploadRow[] = matches.map(phone => ({
-          phone: phone.trim(),
+          phone: normalizePhone(phone.trim()),
           name: 'Unknown',
           status: defaultStatus,
         }));
@@ -272,6 +359,7 @@ export default function UploadData() {
         toast.error('No sheet found in file');
         return;
       }
+
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
       const { rows: parsedRows, totalRows, error } = buildUploadRowsFromSheet(rows);
       if (error) {
@@ -368,9 +456,10 @@ export default function UploadData() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-amber-800 space-y-2">
-            <p>Max 5000 rows per upload.</p>
+            <p>Max 10000 rows per upload.</p>
             <p>Duplicate phone numbers are removed automatically.</p>
             <p>PDF imports extract phone numbers only.</p>
+            <p>Supports common formats like Name, Client Name, Mobile, Phone, WhatsApp, Contact No.</p>
           </CardContent>
         </Card>
       )}

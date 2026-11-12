@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { User, UserRole } from '@/types';
 import { apiFetch, emitAuthChange, getAuthToken } from '@/lib/api';
+import { users } from '@/data/mockData';
 
 interface AuthContextType {
   user: User | null;
@@ -123,13 +124,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const mockUser = users.find(
+        (userItem) => userItem.email.toLowerCase() === normalizedEmail && userItem.password === password
+      );
+
+      if (mockUser) {
+        setToken('demo-token');
+        setUser(mockUser);
+        return true;
+      }
+
       const response = await apiFetch('auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          email: email.trim(),
+          email: normalizedEmail,
           password,
         }),
       });

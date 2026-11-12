@@ -1,4 +1,4 @@
-import * as React from "react"
+brew install mysqlimport * as React from "react"
 
 const MOBILE_BREAKPOINT = 768
 

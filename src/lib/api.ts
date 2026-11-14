@@ -90,10 +90,16 @@ const DEFAULT_MESSAGES: Record<number, string> = {
 /** Turns a non-OK response into an ApiError (never throws while doing so). */
 export async function readApiError(response: Response): Promise<ApiError> {
   let payload: { error?: string; code?: string; details?: unknown; requestId?: string } = {};
+  let isJson = true;
   try {
     payload = await response.json();
   } catch {
     // not JSON (proxy error page, empty body)
+    isJson = false;
+  }
+  if (response.status === 404 && !isJson) {
+    // Express's own "Cannot GET ..." page: the route does not exist on the running server
+    return new ApiError(404, 'ENDPOINT_MISSING', 'The server does not offer this feature yet. The running backend is probably an older version: restart it (npm start in yourmentorsapp).');
   }
   const fieldErrors: Record<string, string> = {};
   if (Array.isArray(payload.details)) {
@@ -127,7 +133,7 @@ export async function apiFetch(path: string, init?: RequestInit) {
   try {
     response = await fetch(`${getApiBase()}/${normalizedPath}`, { ...init, cache: 'no-store', headers });
   } catch {
-    throw new ApiError(0, 'NETWORK', DEFAULT_MESSAGES[0]);
+    throw new ApiError(0, 'NETWORK', `Cannot reach the server at ${getApiBase()}. Make sure the backend is running, then try again.`);
   }
   const sentToken = headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
   if (response.status === 401 && sentToken && normalizedPath !== 'auth/login' && sentToken === getAuthToken()) {

@@ -66,6 +66,16 @@ export function fromRequirementsForm(form: RequirementsForm): { value: LeadRequi
   return { value, errors };
 }
 
+/** Labels of choices that are no longer offered but may still be stored on older leads. */
+export const LEGACY_CHOICE_LABELS: Record<string, string> = {
+  personal_living: 'Personal Living (old option)',
+  upgrading: 'Upgrading (old option)',
+};
+
+/** Label of a stored choice value (falls back to the old-option label, then the raw value). */
+export const choiceLabel = (list: { value: string; label: string }[], value: string | null | undefined) =>
+  value ? list.find((o) => o.value === value)?.label ?? LEGACY_CHOICE_LABELS[value] ?? value : '';
+
 export const formatMoney = (n: number | null | undefined) => (n === null || n === undefined ? '' : `${Number(n).toLocaleString('en-US')} EGP`);
 
 export function budgetText(r?: LeadRequirements | null) {
@@ -78,7 +88,7 @@ export function budgetText(r?: LeadRequirements | null) {
 export function requirementsSummary(r: LeadRequirements | undefined | null, options: LeadOptions) {
   if (!r) return '';
   const names = (ids: number[], list: { id: number; name: string }[]) => ids.map((id) => list.find((o) => o.id === id)?.name).filter(Boolean).join(', ');
-  return [names(r.destinationIds, options.destinations), names(r.propertyTypeIds, options.propertyTypes), budgetText(r), options.purpose.find((p) => p.value === r.purpose)?.label]
+  return [names(r.destinationIds, options.destinations), names(r.propertyTypeIds, options.propertyTypes), budgetText(r), choiceLabel(options.purpose, r.purpose)]
     .filter(Boolean).join(' · ');
 }
 

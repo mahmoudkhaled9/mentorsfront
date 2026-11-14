@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Your Mentor</title>
+  <rect width="64" height="64" rx="14" fill="#1c1c1e"/>
+  <path d="M11 47c4-3 7-12 9-20s4-14 6-13c2 1 0 14 1 24 1-9 6-23 9-23s1 15 2 23c1-9 6-22 9-22 2 0-1 13 0 21 1 6 4 6 7 3"
+        fill="none" stroke="#ffffff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

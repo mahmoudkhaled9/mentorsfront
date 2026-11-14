@@ -3,14 +3,15 @@ import { MessageCircle, Phone } from 'lucide-react';
 import { telHref, whatsappHref } from '@/lib/phone';
 
 /** Call + WhatsApp links for a phone number (disabled when the number cannot be dialled). */
-export function ContactButtons({ phone, whatsapp, name }: { phone: string; whatsapp?: string; name: string }) {
+/** `onCall`: the Call Action to open when the agent calls (the tel: link still dials on phones / softphones). */
+export function ContactButtons({ phone, whatsapp, name, onCall }: { phone: string; whatsapp?: string; name: string; onCall?: () => void }) {
   const call = telHref(phone);
   const chat = whatsappHref(whatsapp || phone);
   return (
     <>
       {call ? (
         <Button asChild variant="outline" size="icon" className="h-8 w-8">
-          <a href={call} aria-label={`Call ${name}`} title={`Call ${phone}`}>
+          <a href={call} aria-label={`Call ${name}`} title={`Call ${phone}`} onClick={onCall}>
             <Phone className="h-4 w-4 text-green-600" />
           </a>
         </Button>

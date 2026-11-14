@@ -38,7 +38,8 @@ const slug = (s) => s.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLower
  * Opens a fresh browser context (own storage = own session) and tracks problems.
  * Use: const s = await session(t); ... await s.done(); (done() fails the test on console/page errors).
  */
-export async function session(t, { viewport = { width: 1440, height: 900 }, allowErrors = [] } = {}) {
+/** `expectServerErrors`: the test itself injects 5xx answers (page.route) to check the UI's error handling. */
+export async function session(t, { viewport = { width: 1440, height: 900 }, allowErrors = [], expectServerErrors = false } = {}) {
   const b = await browser();
   const context = await b.newContext({ viewport, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
   await context.tracing.start({ screenshots: true, snapshots: true });
@@ -55,7 +56,7 @@ export async function session(t, { viewport = { width: 1440, height: 900 }, allo
     problems.push(`console error: ${text.slice(0, 300)}`);
   });
   page.on('response', (r) => {
-    if (r.url().startsWith(API) && r.status() >= 500) problems.push(`server error ${r.status()} ${r.request().method()} ${r.url()}`);
+    if (!expectServerErrors && r.url().startsWith(API) && r.status() >= 500) problems.push(`server error ${r.status()} ${r.request().method()} ${r.url()}`);
   });
   const name = slug(t.fullName ?? t.name ?? 'test');
   return {

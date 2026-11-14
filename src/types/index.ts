@@ -109,7 +109,8 @@ export interface Lead {
 // Client requirements of a lead (stored by the backend in lead_requirements + link tables)
 export type DeliveryOption = 'ready_to_move' | 'within_1_year' | 'within_2_years' | 'within_3_years' | 'within_4_years';
 export type FinishingOption = 'fully_finished' | 'semi_finished' | 'core_and_shell';
-export type PurposeOption = 'investment' | 'personal_living' | 'upgrading';
+/** End User / Investment are offered; personal_living / upgrading only exist on older leads. */
+export type PurposeOption = 'end_user' | 'investment' | 'personal_living' | 'upgrading';
 
 export interface LeadRequirements {
   destinationIds: number[];
@@ -142,6 +143,51 @@ export interface LeadOptions {
   delivery: ChoiceOption<DeliveryOption>[];
   finishing: ChoiceOption<FinishingOption>[];
   purpose: ChoiceOption<PurposeOption>[];
+}
+
+/** One logged call (table call_history). Older rows may lack delivery / finishing / purpose. */
+export interface CallRecord {
+  id: number;
+  entityType: 'lead' | 'cold_call';
+  leadId: number | null;
+  coldCallId: number | null;
+  entityName: string;
+  entityPhone: string;
+  userId: number | null;
+  userName: string;
+  outcome: string;
+  outcomeLabel: string;
+  statusId: number | null;
+  statusName: string;
+  delivery: string | null;
+  deliveryLabel: string | null;
+  finishing: string | null;
+  finishingLabel: string | null;
+  purpose: string | null;
+  purposeLabel: string | null;
+  notes: string;
+  callAt: string;
+  followUpAt: string | null;
+  followUpEventId: number | null;
+  commentId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ActivityEntry {
+  kind: 'call' | 'comment' | 'follow_up';
+  at: string;
+  id: string;
+  call?: CallRecord;
+  comment?: Comment;
+  followUp?: { id: number; title: string; notes: string; startAt: string; userId: number | null };
+}
+
+export interface RecordActivity {
+  calls: CallRecord[];
+  comments: Comment[];
+  followUps: { id: number; title: string; notes: string; startAt: string; userId: number | null }[];
+  timeline: ActivityEntry[];
 }
 
 // Comment/Report Types

@@ -5,7 +5,10 @@ import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
-  base: './',
+  // Absolute base: the app uses BrowserRouter at the domain root (public/.htaccess has RewriteBase /), so a relative
+  // './' base made nested URLs such as /leads/1 or /admin/users load ./assets/... from /leads/assets/... on refresh
+  // and render a white page. Deploying under a sub-folder would need this and the router's basename changed together.
+  base: '/',
   plugins: [command === 'serve' ? inspectAttr() : null, react()].filter(Boolean),
   resolve: {
     alias: {

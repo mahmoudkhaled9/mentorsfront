@@ -22,7 +22,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AssignDialog } from '@/components/records/AssignDialog';
 import { ColumnsDialog } from '@/components/records/ColumnsDialog';
-import { CommentsDialog } from '@/components/records/CommentsDialog';
 import { ConfirmDialog } from '@/components/records/ConfirmDialog';
 import { ContactButtons } from '@/components/records/ContactButtons';
 import { ExportButtons } from '@/components/records/ExportButtons';
@@ -30,7 +29,9 @@ import { StatusTabs } from '@/components/records/StatusTabs';
 import { TablePagination } from '@/components/records/TablePagination';
 import { pageCount } from '@/lib/table';
 import { exportExcel } from '@/lib/exporters';
-import { Plus, Search, Filter, UserPlus, Columns, Trash2, Target, XCircle, CheckCircle, Edit, FileSpreadsheet, FileText, X } from 'lucide-react';
+import { Plus, Search, Filter, UserPlus, Columns, Trash2, Target, XCircle, CheckCircle, Edit, FileSpreadsheet, FileText, X, PhoneCall } from 'lucide-react';
+import { CallActionDialog, type CallTarget } from '@/components/calls/CallActionDialog';
+import { ActivityTimeline } from '@/components/calls/ActivityTimeline';
 
 type ColumnKey = 'id' | 'type' | 'name' | 'phone' | 'status' | 'assignedTo' | 'teamLeader' | 'potential' | 'date' | 'notes' | 'action';
 
@@ -102,6 +103,9 @@ export default function ColdCalls() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [commentsCall, setCommentsCall] = useState<Lead | null>(null);
+  const [callTarget, setCallTarget] = useState<CallTarget | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const callColdCall = (c: Lead) => setCallTarget({ type: 'cold_call', id: c.id, name: c.name, phone: c.phone, statusId: c.statusId });
 
   const resetView = () => {
     setPage(1);
@@ -400,11 +404,14 @@ export default function ColdCalls() {
                     {columns.action && (
                       <TableCell>
                         <div className="flex gap-1">
-                          <ContactButtons phone={call.phone} name={call.name} />
+                          <ContactButtons phone={call.phone} name={call.name} onCall={() => callColdCall(call)} />
+                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Log call with ${call.name}`} title="Log a call (Call Action)" onClick={() => callColdCall(call)}>
+                            <PhoneCall className="h-4 w-4 text-blue-600" />
+                          </Button>
                           <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Edit ${call.name}`} title="Edit cold call" onClick={() => openEdit(call)}>
                             <Edit className="h-4 w-4 text-gray-600" />
                           </Button>
-                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Comments of ${call.name}`} title="Comments" onClick={() => setCommentsCall(call)}>
+                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`History of ${call.name}`} title="Calls and comments" onClick={() => setCommentsCall(call)}>
                             <FileText className="h-4 w-4 text-gray-600" />
                           </Button>
                         </div>
@@ -480,14 +487,24 @@ export default function ColdCalls() {
         busy={deleting}
         onConfirm={deleteSelected}
       />
-      <CommentsDialog
-        open={Boolean(commentsCall)}
-        onOpenChange={(open) => !open && setCommentsCall(null)}
-        entityType="cold_call"
-        entityId={commentsCall?.id ?? null}
-        title={commentsCall ? `Comments - ${commentsCall.name}` : 'Comments'}
-      />
+      <Dialog open={Boolean(commentsCall)} onOpenChange={(open) => !open && setCommentsCall(null)}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>History - {commentsCall?.name}</DialogTitle>
+            <DialogDescription>Calls (with Delivery, Finishing and Purpose), comments and follow-ups of this cold call.</DialogDescription>
+          </DialogHeader>
+          {commentsCall && (
+            <>
+              <Button className="w-fit" onClick={() => callColdCall(commentsCall)}>
+                <PhoneCall className="mr-2 h-4 w-4" /> Log a call
+              </Button>
+              <ActivityTimeline entityType="cold_call" entityId={commentsCall.id} refreshKey={historyRefresh} />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
       <ColumnsDialog open={showColumns} onOpenChange={setShowColumns} columns={COLUMNS} visible={columns} onChange={setColumns} />
+      <CallActionDialog target={callTarget} onOpenChange={(open) => !open && setCallTarget(null)} onSaved={() => setHistoryRefresh((n) => n + 1)} />
     </div>
   );
 }

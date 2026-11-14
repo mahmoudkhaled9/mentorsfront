@@ -40,7 +40,7 @@ test('add a lead with client requirements through the form; invalid phone is ref
     await page.fill('#lead-req-budgetMax', '9,000,000');
     await page.fill('#lead-req-downPayment', '900000');
     await choose(page, 'Purpose of purchase', 'Investment');
-    await choose(page, 'Delivery', 'Ready to Move');
+    await choose(page, 'Delivery', 'RTM');
     await choose(page, 'Finishing', 'Fully Finished');
     await shot('lead-form-filled');
     await page.getByRole('button', { name: 'Save Lead' }).click();
@@ -61,17 +61,17 @@ test('add a lead with client requirements through the form; invalid phone is ref
 test('requirement filters, search and the requirements column use the stored data', async (t) => {
   const name = unique('Filter Client');
   const sokhna = options.destinations.find((d) => d.name === 'Ain Sokhna');
-  const created = await api('POST', 'leads', { name, phone: phone(), statusId: 1, requirements: { destinationIds: [sokhna.id], budgetMin: 3000000, budgetMax: 5000000, purpose: 'upgrading' } }, admin);
+  const created = await api('POST', 'leads', { name, phone: phone(), statusId: 1, requirements: { destinationIds: [sokhna.id], budgetMin: 3000000, budgetMax: 5000000, purpose: 'end_user' } }, admin);
   assert.equal(created.status, 200);
   await withSession(t, async ({ page, shot }) => {
     await login(page, 'admin');
     await page.goto(`${APP}/leads`);
     await page.getByRole('button', { name: 'Filters' }).click();
     await choose(page, 'Filter by destination', 'Ain Sokhna');
-    await choose(page, 'Filter by purpose', 'Upgrading');
+    await choose(page, 'Filter by purpose', 'End User');
     await page.fill('#leads-budget', '4,000,000');
     await page.getByRole('cell', { name, exact: true }).waitFor();
-    await page.getByText(/Ain Sokhna · .*3,000,000 EGP – 5,000,000 EGP · Upgrading/).first().waitFor();
+    await page.getByText(/Ain Sokhna · .*3,000,000 EGP – 5,000,000 EGP · End User/).first().waitFor();
     // a budget outside the client's range hides the lead
     await page.fill('#leads-budget', '7,000,000');
     await page.getByRole('cell', { name, exact: true }).waitFor({ state: 'detached' });

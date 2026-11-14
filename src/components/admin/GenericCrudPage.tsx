@@ -115,19 +115,30 @@ export function GenericCrudPage<T extends { id: number }>({
   const [deleting, setDeleting] = useState<T | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  /** Loads the list from the server. Returns true on success (Retry uses it to report a repeated failure). */
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
       const response = await apiFetch(endpoint);
       if (!response.ok) throw await readApiError(response);
-      setItems((await response.json()) as T[]);
+      const data = (await response.json()) as unknown;
+      if (!Array.isArray(data)) throw new Error('The server answered with something that is not a list');
+      setItems(data as T[]);
       setLoadError('');
+      return true;
     } catch (error) {
       setLoadError(errorMessage(error));
+      return false;
     } finally {
       setLoading(false);
     }
   }, [endpoint]);
+
+  const retry = async () => {
+    const ok = await fetchItems();
+    if (ok) toast.success(`${title} loaded`);
+    else toast.error(`Still could not load ${itemLabel}s - see the message on the page`);
+  };
 
   useEffect(() => {
     void fetchItems();
@@ -357,16 +368,16 @@ export function GenericCrudPage<T extends { id: number }>({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading && !items.length ? (
+                {loading && !items.length && !loadError ? (
                   <TableRow>
                     <TableCell colSpan={columns.length + 2} className="py-8 text-center text-gray-500">Loading...</TableCell>
                   </TableRow>
                 ) : loadError ? (
                   <TableRow>
                     <TableCell colSpan={columns.length + 2} className="py-8 text-center">
-                      <p className="text-red-600">Could not load {itemLabel}s: {loadError}</p>
-                      <Button variant="outline" size="sm" className="mt-3" onClick={() => void fetchItems()}>
-                        <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                      <p className="text-red-600" role="alert">Could not load {itemLabel}s: {loadError}</p>
+                      <Button variant="outline" size="sm" className="mt-3" disabled={loading} onClick={() => void retry()}>
+                        <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} /> {loading ? 'Retrying...' : 'Retry'}
                       </Button>
                     </TableCell>
                   </TableRow>

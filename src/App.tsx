@@ -10,6 +10,8 @@ import Developers from '@/pages/Developers';
 import DeveloperDetails from '@/pages/DeveloperDetails';
 import Deals from '@/pages/Deals';
 import Leads from '@/pages/Leads';
+import LeadDetails from '@/pages/LeadDetails';
+import CallHistory from '@/pages/CallHistory';
 import ColdCalls from '@/pages/ColdCalls';
 import Reports from '@/pages/Reports';
 import AgentCare from '@/pages/AgentCare';
@@ -60,6 +62,8 @@ function AppRoutes() {
         <Route path="developers/:id" element={<DeveloperDetails />} />
         <Route path="deals" element={<Deals />} />
         <Route path="leads" element={<Leads />} />
+        <Route path="leads/:id" element={<LeadDetails />} />
+        <Route path="call-history" element={<CallHistory />} />
         <Route path="cold-calls" element={<ColdCalls />} />
         <Route path="reports" element={<Reports />} />
         <Route path="agent-care" element={<AgentCare />} />

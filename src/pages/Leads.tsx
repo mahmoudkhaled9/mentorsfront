@@ -1,805 +1,481 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useData } from '@/contexts/DataContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePersistentState } from '@/hooks/usePersistentState';
+import { ApiError, errorMessage } from '@/lib/api';
+import { jsonRequest } from '@/lib/mutations';
+import { savedId, savedItem } from '@/lib/saved';
+import { checkPhone, CLIENT_PHONE_HINT } from '@/lib/phone';
+import { isAssignerRole, isSuperRole } from '@/lib/roles';
+import {
+  budgetText,
+  emptyRequirementFilters,
+  formatMoney,
+  fromRequirementsForm,
+  hasRequirementFilters,
+  matchesRequirementFilters,
+  requirementsSummary,
+  toRequirementsForm,
+  type RequirementFilters,
+  type RequirementsForm,
+} from '@/lib/requirements';
+import type { ExportRow } from '@/lib/exporters';
+import type { Comment, Lead } from '@/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { getVisibleUserIds } from '@/lib/hierarchy';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Phone, 
-  MessageCircle,
-  UserPlus,
-  FileText,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  FileSpreadsheet,
-  File as FileIcon,
-  Trash2,
-  Columns,
-  Edit
-} from 'lucide-react';
-import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
-import { jsonRequest } from '@/lib/mutations';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RequirementsFields } from '@/components/leads/RequirementsFields';
+import { AssignDialog } from '@/components/records/AssignDialog';
+import { ColumnsDialog } from '@/components/records/ColumnsDialog';
+import { CommentsDialog } from '@/components/records/CommentsDialog';
+import { ConfirmDialog } from '@/components/records/ConfirmDialog';
+import { ContactButtons } from '@/components/records/ContactButtons';
+import { ExportButtons } from '@/components/records/ExportButtons';
+import { StatusTabs } from '@/components/records/StatusTabs';
+import { TablePagination } from '@/components/records/TablePagination';
+import { pageCount } from '@/lib/table';
+import { Plus, Search, Filter, UserPlus, FileText, Trash2, Columns, Edit, X } from 'lucide-react';
+
+type ColumnKey = 'id' | 'name' | 'phone' | 'action' | 'status' | 'source' | 'project' | 'requirements' | 'assignedTo' | 'teamLeader' | 'date' | 'comments';
+
+const COLUMNS: { key: ColumnKey; label: string }[] = [
+  { key: 'id', label: 'ID' },
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'action', label: 'Actions' },
+  { key: 'status', label: 'Status' },
+  { key: 'source', label: 'Source' },
+  { key: 'project', label: 'Project' },
+  { key: 'requirements', label: 'Requirements' },
+  { key: 'assignedTo', label: 'Assigned To' },
+  { key: 'teamLeader', label: 'Team Leader' },
+  { key: 'date', label: 'Date' },
+  { key: 'comments', label: 'Comments' },
+];
+
+const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
+  id: true, name: true, phone: false, action: true, status: true, source: false, project: true,
+  requirements: true, assignedTo: true, teamLeader: false, date: false, comments: true,
+};
+
+const PAGE_SIZES = [10, 25, 50, 100];
+const NONE = '__none__';
+
+interface LeadForm {
+  name: string;
+  phone: string;
+  whatsapp: string;
+  email: string;
+  statusId: string;
+  sourceId: string;
+  projectId: string;
+  comment: string;
+  requirements: RequirementsForm;
+}
+
+const emptyForm = (statusId = ''): LeadForm => ({
+  name: '', phone: '', whatsapp: '', email: '', statusId, sourceId: '', projectId: '', comment: '', requirements: toRequirementsForm(null),
+});
+
+const formFromLead = (lead: Lead): LeadForm => ({
+  name: lead.name,
+  phone: lead.phone ?? '',
+  whatsapp: lead.whatsapp ?? '',
+  email: lead.email ?? '',
+  statusId: lead.statusId ? String(lead.statusId) : '',
+  sourceId: lead.sourceId ? String(lead.sourceId) : '',
+  projectId: lead.projectId ? String(lead.projectId) : '',
+  comment: '',
+  requirements: toRequirementsForm(lead.requirements),
+});
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export default function Leads() {
   const { user } = useAuth();
-  const { leads, setLeads, statuses, users, comments, setComments, projects } = useData();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('All');
-  const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
-  const [showEntries, setShowEntries] = useState(10);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newLeadName, setNewLeadName] = useState('');
-  const [newLeadPhone, setNewLeadPhone] = useState('');
-  const [newLeadStatus, setNewLeadStatus] = useState('');
-  const [newLeadProjectId, setNewLeadProjectId] = useState('');
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
-  const [assignUserId, setAssignUserId] = useState('');
-  const [showCommentDialog, setShowCommentDialog] = useState(false);
-  const [activeLeadId, setActiveLeadId] = useState<number | null>(null);
-  const [newComment, setNewComment] = useState('');
+  const { leads, setLeads, statuses, leadSources, users, projects, leadOptions, setComments, reload, isLoading } = useData();
+  const canAssign = isAssignerRole(user?.role);
+  const canDateFilter = isSuperRole(user?.role);
+
+  // ---- view state ------------------------------------------------------------------------------------------------
+  const [search, setSearch] = useState('');
+  const [statusTab, setStatusTab] = useState('All');
+  const [selected, setSelected] = useState<number[]>([]);
+  const [pageSize, setPageSize] = usePersistentState('mentors.leads.pageSize', 10);
+  const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
   const [filterProject, setFilterProject] = useState('all');
   const [filterAssignee, setFilterAssignee] = useState('all');
-  const [showColumnsDialog, setShowColumnsDialog] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState({
-    id: true,
-    name: true,
-    action: true,
-    status: true,
-    project: true,
-    assignedTo: true,
-    comments: true,
-  });
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [editLeadId, setEditLeadId] = useState<number | null>(null);
-  const [editStatus, setEditStatus] = useState('');
-  const [editComment, setEditComment] = useState('');
-  const [editProjectId, setEditProjectId] = useState('');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const canDateFilter = user?.role === 'admin' || user?.role === 'franchise_owner';
-  const canAssign = ['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader'].includes(user?.role ?? '');
-  const [showReassignDialog, setShowReassignDialog] = useState(false);
-  const [reassignLeadId, setReassignLeadId] = useState<number | null>(null);
-  const [reassignUserId, setReassignUserId] = useState('');
-  const [showBulkReassignDialog, setShowBulkReassignDialog] = useState(false);
-  const [bulkReassignUserId, setBulkReassignUserId] = useState('');
-  const canReassign = user?.role === 'admin' || user?.role === 'franchise_owner';
+  const [filterSource, setFilterSource] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [reqFilters, setReqFilters] = useState<RequirementFilters>(emptyRequirementFilters());
+  const [columns, setColumns] = usePersistentState<Record<ColumnKey, boolean>>('mentors.leads.columns', DEFAULT_COLUMNS);
+  const [showColumns, setShowColumns] = useState(false);
 
-  const visibleUserIds = getVisibleUserIds(user, users);
-  const scopedLeads = leads.filter(lead => {
-    if (!user) return false;
-    if (user.role === 'admin' || user.role === 'franchise_owner') return true;
-    const assignedVisible = lead.assignedToId && visibleUserIds.includes(lead.assignedToId);
-    const teamLeaderVisible = lead.teamLeaderId && visibleUserIds.includes(lead.teamLeaderId);
-    return assignedVisible || teamLeaderVisible;
-  });
+  // ---- dialogs -----------------------------------------------------------------------------------------------------
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Lead | null>(null);
+  const [form, setForm] = useState<LeadForm>(emptyForm());
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [commentsLead, setCommentsLead] = useState<Lead | null>(null);
 
-  // Get status counts
-  const getStatusCount = (statusName: string) => {
-    if (statusName === 'All') return scopedLeads.length;
-    return scopedLeads.filter(lead => lead.status === statusName).length;
+  /** Any filter change starts again on page 1 with nothing selected (so actions never hit hidden rows). */
+  const resetView = () => {
+    setPage(1);
+    setSelected([]);
+  };
+  const changed = <T,>(setter: (value: T) => void) => (value: T) => {
+    setter(value);
+    resetView();
   };
 
-  // Filter leads
-  const filteredLeads = scopedLeads.filter(lead => {
-    const matchesSearch = 
-      lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.phone.includes(searchTerm);
-    
-    const matchesStatus = selectedStatus === 'All' || lead.status === selectedStatus;
+  // ---- filtering ---------------------------------------------------------------------------------------------------
+  const term = search.trim().toLowerCase();
+  const termDigits = term.replace(/\D/g, '');
+  const matchesAllButStatus = useMemo(() => (lead: Lead) => {
+    if (term) {
+      const text = `${lead.name} ${lead.email ?? ''} ${lead.project ?? ''} ${lead.assignedTo ?? ''}`.toLowerCase();
+      const phones = `${lead.phone ?? ''} ${lead.whatsapp ?? ''}`.replace(/\D/g, '');
+      if (!text.includes(term) && !(termDigits.length >= 3 && phones.includes(termDigits))) return false;
+    }
+    if (filterProject !== 'all' && String(lead.projectId ?? '') !== filterProject) return false;
+    if (filterAssignee !== 'all' && String(lead.assignedToId ?? '') !== filterAssignee) return false;
+    if (filterSource !== 'all' && String(lead.sourceId ?? '') !== filterSource) return false;
+    const day = lead.date || '';
+    if (dateFrom && (!day || day < dateFrom)) return false;
+    if (dateTo && (!day || day > dateTo)) return false;
+    return matchesRequirementFilters(lead.requirements, reqFilters);
+  }, [term, termDigits, filterProject, filterAssignee, filterSource, dateFrom, dateTo, reqFilters]);
 
-    const matchesProject =
-      filterProject === 'all' ||
-      (lead.project && lead.project === filterProject);
+  const beforeStatus = useMemo(() => leads.filter(matchesAllButStatus), [leads, matchesAllButStatus]);
+  const filtered = useMemo(
+    () => (statusTab === 'All' ? beforeStatus : beforeStatus.filter((l) => l.status === statusTab)),
+    [beforeStatus, statusTab]
+  );
+  const statusCount = (name: string) => (name === 'All' ? beforeStatus.length : beforeStatus.filter((l) => l.status === name).length);
 
-    const matchesAssignee =
-      filterAssignee === 'all' ||
-      (lead.assignedToId && lead.assignedToId.toString() === filterAssignee);
-    
-    const leadDate = lead.date || '';
-    const matchesDate =
-      (!filterDateFrom || (leadDate && leadDate >= filterDateFrom)) &&
-      (!filterDateTo || (leadDate && leadDate <= filterDateTo));
+  const pages = pageCount(filtered.length, pageSize);
+  const safePage = Math.min(page, pages);
+  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const allOnPageSelected = pageRows.length > 0 && pageRows.every((l) => selected.includes(l.id));
 
-    return matchesSearch && matchesStatus && matchesProject && matchesAssignee && matchesDate;
-  });
+  const anyFilter = Boolean(term) || filterProject !== 'all' || filterAssignee !== 'all' || filterSource !== 'all' || Boolean(dateFrom) || Boolean(dateTo) || hasRequirementFilters(reqFilters) || statusTab !== 'All';
+  const clearFilters = () => {
+    setSearch('');
+    setStatusTab('All');
+    setFilterProject('all');
+    setFilterAssignee('all');
+    setFilterSource('all');
+    setDateFrom('');
+    setDateTo('');
+    setReqFilters(emptyRequirementFilters());
+    resetView();
+  };
 
-  // Pagination
-  const totalPages = Math.ceil(filteredLeads.length / showEntries);
-  const paginatedLeads = filteredLeads.slice(
-    (currentPage - 1) * showEntries,
-    currentPage * showEntries
+  const assignableUsers = users.filter((u) => u.isActive !== false && !isSuperRole(u.role));
+  const statusColor = (name: string) => statuses.find((s) => s.name === name)?.color || '#6B7280';
+  const optionLabel = (list: { value: string; label: string }[], value: string | null | undefined) => list.find((o) => o.value === value)?.label ?? '';
+
+  // ---- export ------------------------------------------------------------------------------------------------------
+  const exportRows = (): ExportRow[] => {
+    const source = selected.length ? leads.filter((l) => selected.includes(l.id)) : filtered;
+    const names = (ids: number[] | undefined, list: { id: number; name: string }[]) => (ids ?? []).map((id) => list.find((o) => o.id === id)?.name).filter(Boolean).join(', ');
+    return source.map((l) => ({
+      ID: l.id,
+      Name: l.name,
+      Phone: l.phone,
+      WhatsApp: l.whatsapp ?? '',
+      Email: l.email ?? '',
+      Status: l.status,
+      Source: l.source ?? '',
+      Project: l.project ?? '',
+      'Assigned To': l.assignedTo ?? '',
+      'Team Leader': l.teamLeader ?? '',
+      Date: l.date ?? '',
+      Destinations: names(l.requirements?.destinationIds, leadOptions.destinations),
+      'Property Types': names(l.requirements?.propertyTypeIds, leadOptions.propertyTypes),
+      Budget: budgetText(l.requirements),
+      Delivery: optionLabel(leadOptions.delivery, l.requirements?.delivery),
+      Finishing: optionLabel(leadOptions.finishing, l.requirements?.finishing),
+      'Down Payment': formatMoney(l.requirements?.downPayment),
+      'Installment / Quarter': formatMoney(l.requirements?.installmentPerQuarter),
+      Purpose: optionLabel(leadOptions.purpose, l.requirements?.purpose),
+    }));
+  };
+
+  // ---- add / edit --------------------------------------------------------------------------------------------------
+  const openAdd = () => {
+    setEditing(null);
+    setForm(emptyForm(statuses[0] ? String(statuses[0].id) : ''));
+    setFormErrors({});
+    setFormOpen(true);
+  };
+
+  const openEdit = (lead: Lead) => {
+    setEditing(lead);
+    setForm(formFromLead(lead));
+    setFormErrors({});
+    setFormOpen(true);
+  };
+
+  const setField = <K extends keyof LeadForm>(key: K, value: LeadForm[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    // an edited field is no longer "wrong" until the next save checks it again
+    setFormErrors((prev) => {
+      const stale = Object.keys(prev).filter((k) => (key === 'requirements' ? k.startsWith('requirements.') : k === key));
+      if (!stale.length) return prev;
+      const next = { ...prev };
+      stale.forEach((k) => delete next[k]);
+      return next;
+    });
+  };
+
+  const statusOrProjectChanged = Boolean(editing) && (
+    form.statusId !== (editing?.statusId ? String(editing.statusId) : '') || form.projectId !== (editing?.projectId ? String(editing.projectId) : '')
   );
 
-  const toggleLeadSelection = (leadId: number) => {
-    setSelectedLeads(prev => 
-      prev.includes(leadId) 
-        ? prev.filter(id => id !== leadId)
-        : [...prev, leadId]
-    );
-  };
-
-  const toggleAllSelection = () => {
-    if (selectedLeads.length === paginatedLeads.length) {
-      setSelectedLeads([]);
-    } else {
-      setSelectedLeads(paginatedLeads.map(lead => lead.id));
-    }
-  };
-
-  const getStatusColor = (statusName: string) => {
-    const status = statuses.find(s => s.name === statusName);
-    return status?.color || '#6B7280';
-  };
-
-  const sanitizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
-  const normalizeWhatsAppPhone = (phone: string) => {
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) return '';
-    if (digits.startsWith('20')) return digits;
-    if (digits.startsWith('0')) return `20${digits.slice(1)}`;
-    return digits;
-  };
-  const getCallHref = (phone: string) => {
-    const cleanPhone = sanitizePhone(phone);
-    return cleanPhone ? `tel:${cleanPhone}` : '';
-  };
-  const getWhatsAppHref = (phone: string) => {
-    const cleanPhone = normalizeWhatsAppPhone(phone);
-    return cleanPhone ? `https://wa.me/${cleanPhone}` : '';
-  };
-
-  const handleReassign = async () => {
-    if (!reassignLeadId || !reassignUserId) {
-      toast.error('Select a user to reassign');
+  const saveLead = async () => {
+    if (saving) return;
+    const problems: Record<string, string> = {};
+    if (!form.name.trim()) problems.name = 'Name is required';
+    const phone = checkPhone(form.phone, { required: true, keep: editing?.phone });
+    if (!phone.ok) problems.phone = phone.message;
+    const whatsapp = checkPhone(form.whatsapp, { required: false, keep: editing?.whatsapp });
+    if (!whatsapp.ok) problems.whatsapp = whatsapp.message;
+    if (form.email.trim() && !EMAIL.test(form.email.trim())) problems.email = 'Enter a valid email address';
+    if (!form.statusId) problems.statusId = 'Choose a status';
+    if (statusOrProjectChanged && !form.comment.trim()) problems.comment = 'Add a comment explaining the status / project change';
+    const req = fromRequirementsForm(form.requirements);
+    Object.assign(problems, req.errors);
+    setFormErrors(problems);
+    if (Object.keys(problems).length || !phone.ok || !whatsapp.ok) {
+      toast.error('Please fix the highlighted fields');
       return;
     }
-    const assignee = users.find(u => u.id.toString() === reassignUserId);
-    if (!assignee) {
-      toast.error('Selected user not found');
-      return;
-    }
-    const teamLeader = assignee.teamLeaderId
-      ? users.find(u => u.id === assignee.teamLeaderId)
-      : undefined;
+
+    setSaving(true);
     try {
-      await jsonRequest(`leads/${reassignLeadId}`, {
-        method: 'PUT',
-        body: { assignedToId: assignee.id, teamLeaderId: teamLeader?.id },
-      });
-      setLeads(prev =>
-        prev.map(lead =>
-          lead.id === reassignLeadId
-            ? {
-                ...lead,
-                assignedTo: assignee.name,
-                assignedToId: assignee.id,
-                teamLeaderId: teamLeader?.id,
-                teamLeader: teamLeader?.name,
-              }
-            : lead
-        )
-      );
-      toast.success('Lead reassigned');
-      setShowReassignDialog(false);
-      setReassignLeadId(null);
-      setReassignUserId('');
+      const body = {
+        name: form.name.trim(),
+        phone: phone.value,
+        whatsapp: whatsapp.value,
+        email: form.email.trim(),
+        statusId: Number(form.statusId),
+        sourceId: form.sourceId ? Number(form.sourceId) : 0,
+        projectId: form.projectId ? Number(form.projectId) : null,
+        requirements: req.value,
+      };
+      const result = editing
+        ? await jsonRequest<{ item: Lead }>(`leads/${editing.id}`, { method: 'PUT', body })
+        : await jsonRequest<{ item: Lead }>('leads', { method: 'POST', body });
+      const saved = savedItem<Lead>(result);
+      const savedRecordId = saved?.id ?? savedId(result) ?? editing?.id ?? null;
+      if (saved) setLeads((prev) => (editing ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
+      else await reload(['leads']); // unexpected answer shape: show what the server has
+      if (form.comment.trim() && savedRecordId) {
+        try {
+          const comment = await jsonRequest<{ item: Comment }>('comments', { method: 'POST', body: { entityType: 'lead', entityId: savedRecordId, content: form.comment.trim() } });
+          const savedComment = savedItem<Comment>(comment);
+          if (savedComment) setComments((prev) => [...prev, savedComment]);
+          else void reload(['comments']);
+        } catch (error) {
+          toast.error(`The lead was saved, but the comment was not: ${errorMessage(error)}`);
+        }
+      }
+      void reload(['reports']);
+      toast.success(editing ? 'Lead updated' : 'Lead added');
+      setFormOpen(false);
     } catch (error) {
-      toast.error((error as Error).message);
+      if (error instanceof ApiError && Object.keys(error.fieldErrors).length) {
+        setFormErrors((prev) => ({ ...prev, ...error.fieldErrors }));
+      }
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleBulkReassign = async () => {
-    if (selectedLeads.length === 0) {
-      toast.error('Select at least one lead to reassign');
-      return;
-    }
-    if (!bulkReassignUserId) {
-      toast.error('Select a user to reassign');
-      return;
-    }
-    const assignee = users.find(u => u.id.toString() === bulkReassignUserId);
-    if (!assignee) {
-      toast.error('Selected user not found');
-      return;
-    }
-    const teamLeader = assignee.teamLeaderId
-      ? users.find(u => u.id === assignee.teamLeaderId)
-      : undefined;
+  // ---- row actions ---------------------------------------------------------------------------------------------------
+  const changeProject = async (lead: Lead, projectId: string) => {
     try {
-      await Promise.all(
-        selectedLeads.map((leadId) =>
-          jsonRequest(`leads/${leadId}`, {
-            method: 'PUT',
-            body: { assignedToId: assignee.id, teamLeaderId: teamLeader?.id },
-          })
-        )
-      );
-      setLeads(prev =>
-        prev.map(lead =>
-          selectedLeads.includes(lead.id)
-            ? {
-                ...lead,
-                assignedTo: assignee.name,
-                assignedToId: assignee.id,
-                teamLeaderId: teamLeader?.id,
-                teamLeader: teamLeader?.name,
-              }
-            : lead
-        )
-      );
-      toast.success(`Reassigned ${selectedLeads.length} leads`);
-      setSelectedLeads([]);
-      setShowBulkReassignDialog(false);
-      setBulkReassignUserId('');
+      const result = await jsonRequest<{ item: Lead }>(`leads/${lead.id}`, { method: 'PUT', body: { projectId: projectId === NONE ? null : Number(projectId) } });
+      const saved = savedItem<Lead>(result);
+      if (saved) setLeads((prev) => prev.map((l) => (l.id === lead.id ? saved : l)));
+      else await reload(['leads']);
+      toast.success(`Project updated for ${lead.name}`);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
-  const handleAddLead = async () => {
-    if (!newLeadName.trim() || !newLeadPhone.trim() || !newLeadStatus) {
-      toast.error('Please fill in name, phone, and status');
-      return;
-    }
-
-    const statusObj = statuses.find(s => s.name === newLeadStatus);
-    const isPotential =
-      newLeadStatus.toLowerCase().includes('potential') &&
-      !newLeadStatus.toLowerCase().includes('non');
-    const project = projects.find(p => p.id.toString() === newLeadProjectId);
-    const currentAssignee = user && user.role !== 'admin' && user.role !== 'franchise_owner' ? user : null;
-    const currentTeamLeaderId = currentAssignee
-      ? (currentAssignee.role === 'team_leader' ? currentAssignee.id : currentAssignee.teamLeaderId)
-      : undefined;
-    const currentTeamLeader = currentTeamLeaderId
-      ? users.find(u => u.id === currentTeamLeaderId)
-      : undefined;
-
+  const assignSelected = async (userId: number) => {
+    setAssigning(true);
     try {
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('leads', {
-        method: 'POST',
-        body: {
-          name: newLeadName.trim(),
-          phone: newLeadPhone.trim(),
-          statusId: statusObj?.id ?? 0,
-          projectId: project?.id,
-          assignedToId: currentAssignee?.id ?? null,
-          teamLeaderId: currentTeamLeaderId ?? null,
-          date: new Date().toISOString().split('T')[0],
-        },
-      });
-      const nextId = created.id ?? (leads.length > 0 ? Math.max(...leads.map(l => l.id)) + 1 : 1);
-      setLeads(prev => [
-        ...prev,
-        {
-          id: nextId,
-          type: 'Lead',
-          name: newLeadName.trim(),
-          phone: newLeadPhone.trim(),
-          status: newLeadStatus,
-          statusId: statusObj?.id ?? 0,
-          project: project?.name,
-          projectId: project?.id,
-          assignedTo: currentAssignee?.name,
-          assignedToId: currentAssignee?.id,
-          teamLeader: currentTeamLeader?.name,
-          teamLeaderId: currentTeamLeaderId,
-          date: new Date().toISOString().split('T')[0],
-          isPotential,
-        },
-      ]);
-
-      toast.success('Lead added successfully!');
-      setShowAddDialog(false);
-      setNewLeadName('');
-      setNewLeadPhone('');
-      setNewLeadStatus('');
-      setNewLeadProjectId('');
+      const result = await jsonRequest<{ count: number }>('leads/bulk-assign', { method: 'POST', body: { ids: selected, assignedToId: userId } });
+      await reload(['leads']);
+      const person = users.find((u) => u.id === userId);
+      toast.success(`Assigned ${result.count} lead(s) to ${person?.name ?? 'the selected user'}`);
+      setSelected([]);
+      setAssignOpen(false);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setAssigning(false);
     }
   };
 
-  const handleDeleteSelected = async () => {
-    if (selectedLeads.length === 0) {
-      return;
-    }
+  const deleteSelected = async () => {
+    setDeleting(true);
     try {
-      await Promise.all(selectedLeads.map((leadId) => jsonRequest(`leads/${leadId}`, { method: 'DELETE' })));
-      setLeads(prev => prev.filter(lead => !selectedLeads.includes(lead.id)));
-      toast.success(`Deleted ${selectedLeads.length} leads`);
-      setSelectedLeads([]);
+      const result = await jsonRequest<{ count: number }>('leads/bulk-delete', { method: 'POST', body: { ids: selected } });
+      setLeads((prev) => prev.filter((l) => !selected.includes(l.id)));
+      toast.success(`Deleted ${result.count} lead(s)`);
+      setSelected([]);
+      setConfirmDelete(false);
+      void reload(['reports', 'comments']);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const handleAssignSelected = async () => {
-    if (!assignUserId) {
-      toast.error('Please select a user to assign');
-      return;
-    }
-    const assignee = users.find(u => u.id.toString() === assignUserId);
-    if (!assignee) {
-      toast.error('Selected user not found');
-      return;
-    }
+  const toggle = (id: number) => setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const togglePage = () =>
+    setSelected((prev) => (allOnPageSelected ? prev.filter((id) => !pageRows.some((l) => l.id === id)) : [...new Set([...prev, ...pageRows.map((l) => l.id)])]));
 
-    try {
-      await Promise.all(
-        selectedLeads.map((leadId) =>
-          jsonRequest(`leads/${leadId}`, {
-            method: 'PUT',
-            body: { assignedToId: assignee.id },
-          })
-        )
-      );
-      setLeads(prev =>
-        prev.map(lead =>
-          selectedLeads.includes(lead.id)
-            ? { ...lead, assignedTo: assignee.name, assignedToId: assignee.id }
-            : lead
-        )
-      );
-      toast.success(`Assigned ${selectedLeads.length} leads to ${assignee.name}`);
-      setSelectedLeads([]);
-      setAssignUserId('');
-      setShowAssignDialog(false);
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
+  const visibleColumnCount = 1 + COLUMNS.filter((c) => columns[c.key]).length;
 
-  const openComments = (leadId: number) => {
-    setActiveLeadId(leadId);
-    setShowCommentDialog(true);
-  };
-
-  const handleAddComment = async () => {
-    if (!activeLeadId || !newComment.trim()) {
-      return;
-    }
-    const createdBy = user?.name || 'Unknown';
-    const createdById = user?.id || 0;
-
-    try {
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('comments', {
-        method: 'POST',
-        body: {
-          leadId: activeLeadId,
-          entityType: 'lead',
-          entityId: activeLeadId,
-          content: newComment.trim(),
-          createdBy,
-          createdById,
-        },
-      });
-      const nextId = created.id ?? (comments.length > 0 ? Math.max(...comments.map(c => c.id)) + 1 : 1);
-      setComments(prev => [
-        ...prev,
-        {
-          id: nextId,
-          leadId: activeLeadId,
-          entityType: 'lead',
-          entityId: activeLeadId,
-          content: newComment.trim(),
-          createdBy,
-          createdById,
-          createdAt: new Date().toLocaleString(),
-        },
-      ]);
-      setNewComment('');
-      toast.success('Comment added to reports');
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const leadComments = activeLeadId
-    ? comments.filter(comment => comment.leadId === activeLeadId)
-    : [];
-
-  const openEditDialog = (leadId: number, currentStatus: string) => {
-    const lead = leads.find(l => l.id === leadId);
-    setEditLeadId(leadId);
-    setEditStatus(currentStatus);
-    setEditComment('');
-    setEditProjectId(lead?.projectId ? lead.projectId.toString() : '');
-    setShowEditDialog(true);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editLeadId) return;
-    if (!editComment.trim()) {
-      toast.error('Comment is required');
-      return;
-    }
-
-    const lead = leads.find(l => l.id === editLeadId);
-    const statusObj = statuses.find(s => s.name === editStatus);
-    const project = projects.find(p => p.id.toString() === editProjectId);
-    const isPotential =
-      editStatus.toLowerCase().includes('potential') &&
-      !editStatus.toLowerCase().includes('non');
-
-    try {
-      await jsonRequest(`leads/${editLeadId}`, {
-        method: 'PUT',
-        body: {
-          statusId: statusObj?.id ?? lead?.statusId,
-          projectId: project?.id ?? lead?.projectId,
-        },
-      });
-
-      const createdBy = user?.name || 'Unknown';
-      const createdById = user?.id || 0;
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('comments', {
-        method: 'POST',
-        body: {
-          leadId: editLeadId,
-          entityType: 'lead',
-          entityId: editLeadId,
-          content: editComment.trim(),
-          createdBy,
-          createdById,
-        },
-      });
-
-      setLeads(prev =>
-        prev.map(lead =>
-          lead.id === editLeadId
-            ? {
-                ...lead,
-                status: editStatus,
-                statusId: statusObj?.id ?? lead.statusId,
-                isPotential,
-                project: project?.name ?? lead.project,
-                projectId: project?.id ?? lead.projectId,
-              }
-            : lead
-        )
-      );
-
-      const nextId = created.id ?? (comments.length > 0 ? Math.max(...comments.map(c => c.id)) + 1 : 1);
-      setComments(prev => [
-        ...prev,
-        {
-          id: nextId,
-          leadId: editLeadId,
-          entityType: 'lead',
-          entityId: editLeadId,
-          content: editComment.trim(),
-          createdBy,
-          createdById,
-          createdAt: new Date().toLocaleString(),
-        },
-      ]);
-
-      toast.success('Lead updated and comment added');
-      setShowEditDialog(false);
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const handleProjectAssign = async (leadId: number, projectId: string) => {
-    const project = projects.find(p => p.id.toString() === projectId);
-    if (!project) return;
-    try {
-      await jsonRequest(`leads/${leadId}`, {
-        method: 'PUT',
-        body: { projectId: project.id },
-      });
-      setLeads(prev =>
-        prev.map(lead =>
-          lead.id === leadId
-            ? { ...lead, project: project.name, projectId: project.id }
-            : lead
-        )
-      );
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const exportSelectedToExcel = () => {
-    if (selectedLeads.length === 0) {
-      toast.error('Select at least one lead to export');
-      return;
-    }
-    const selected = leads.filter(lead => selectedLeads.includes(lead.id));
-    const rows = selected.map(lead => ({
-      ID: lead.id,
-      Name: lead.name,
-      Phone: lead.phone,
-      Status: lead.status,
-      Project: lead.project || '',
-      AssignedTo: lead.assignedTo || '',
-      Date: lead.date || '',
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'SelectedLeads');
-    XLSX.writeFile(workbook, `selected-leads-${new Date().toISOString().slice(0,10)}.xlsx`);
-    toast.success('Exported selected leads to Excel');
-  };
-
+  // ---- render --------------------------------------------------------------------------------------------------------
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900">My Leads</h1>
-          <Badge variant="secondary" className="text-lg">
-            {filteredLeads.length}
-          </Badge>
+          <Badge variant="secondary" className="text-lg" data-testid="leads-count">{filtered.length}</Badge>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {canAssign && (
             <Button
               variant="outline"
-              onClick={() => {
-                if (selectedLeads.length === 0) {
-                  toast.error('Select at least one lead to assign');
-                  return;
-                }
-                setShowAssignDialog(true);
-              }}
+              onClick={() => (selected.length ? setAssignOpen(true) : toast.error('Select at least one lead to assign'))}
             >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Assign
+              <UserPlus className="mr-2 h-4 w-4" />
+              Assign{selected.length ? ` (${selected.length})` : ''}
             </Button>
           )}
-          {canReassign && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (selectedLeads.length === 0) {
-                  toast.error('Select at least one lead to reassign');
-                  return;
-                }
-                setShowBulkReassignDialog(true);
-              }}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Reassign
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => setShowFilters((prev) => !prev)}>
-            <Filter className="w-4 h-4 mr-2" />
+          <Button variant={showFilters ? 'default' : 'outline'} aria-expanded={showFilters} onClick={() => setShowFilters((prev) => !prev)}>
+            <Filter className="mr-2 h-4 w-4" />
             Filters
           </Button>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Lead
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New Lead</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <Input placeholder="Name" value={newLeadName} onChange={(e) => setNewLeadName(e.target.value)} />
-                <Input placeholder="Phone" value={newLeadPhone} onChange={(e) => setNewLeadPhone(e.target.value)} />
-                <Select value={newLeadStatus} onValueChange={setNewLeadStatus}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map(status => (
-                      <SelectItem key={status.id} value={status.name}>
-                        {status.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={newLeadProjectId} onValueChange={setNewLeadProjectId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Project (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map(project => (
-                      <SelectItem key={project.id} value={project.id.toString()}>
-                        {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleAddLead}>
-                  Save Lead
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button onClick={openAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Lead
+          </Button>
         </div>
       </div>
 
-      {/* Status Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        <Button
-          variant={selectedStatus === 'All' ? 'default' : 'outline'}
-          onClick={() => setSelectedStatus('All')}
-          className="whitespace-nowrap"
-        >
-          All
-          <Badge variant="secondary" className="ml-2">
-            {getStatusCount('All')}
-          </Badge>
-        </Button>
-        {statuses.map(status => (
-          <Button
-            key={status.id}
-            variant={selectedStatus === status.name ? 'default' : 'outline'}
-            onClick={() => setSelectedStatus(status.name)}
-            className="whitespace-nowrap"
-            style={selectedStatus === status.name ? {} : { borderColor: status.color }}
-          >
-            {status.name}
-            <Badge 
-              variant="secondary" 
-              className="ml-2"
-              style={{ backgroundColor: status.color + '20', color: status.color }}
-            >
-              {getStatusCount(status.name)}
-            </Badge>
-          </Button>
-        ))}
-      </div>
+      <StatusTabs statuses={statuses} selected={statusTab} onSelect={changed(setStatusTab)} count={statusCount} />
 
       {showFilters && (
         <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Select value={filterProject} onValueChange={setFilterProject}>
-                <SelectTrigger className="w-full sm:w-[220px]">
-                  <SelectValue placeholder="Filter by Project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Projects</SelectItem>
-                  {projects.map(project => (
-                    <SelectItem key={project.id} value={project.name}>
-                      {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-              </Select>
-
-              <Select value={filterAssignee} onValueChange={setFilterAssignee}>
-                <SelectTrigger className="w-full sm:w-[220px]">
-                  <SelectValue placeholder="Filter by Assignee" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Assignees</SelectItem>
-                  {users.map(u => (
-                    <SelectItem key={u.id} value={u.id.toString()}>
-                      {u.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <CardContent className="space-y-4 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <FilterSelect label="Project" value={filterProject} onChange={changed(setFilterProject)} all="All Projects" options={projects.map((p) => ({ value: String(p.id), label: p.name }))} />
+              <FilterSelect label="Assigned to" value={filterAssignee} onChange={changed(setFilterAssignee)} all="All Assignees" options={users.map((u) => ({ value: String(u.id), label: u.name }))} />
+              <FilterSelect label="Source" value={filterSource} onChange={changed(setFilterSource)} all="All Sources" options={leadSources.map((s) => ({ value: String(s.id), label: s.name }))} />
+              {canDateFilter && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="leads-from">From</Label>
+                    <Input id="leads-from" type="date" value={dateFrom} onChange={(e) => changed(setDateFrom)(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="leads-to">To</Label>
+                    <Input id="leads-to" type="date" value={dateTo} onChange={(e) => changed(setDateTo)(e.target.value)} />
+                  </div>
+                </div>
+              )}
             </div>
-            {canDateFilter && (
-              <div className="mt-4 flex flex-col sm:flex-row gap-4">
-                <div className="w-full sm:w-[220px]">
-                  <Input
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    placeholder="From"
-                  />
-                </div>
-                <div className="w-full sm:w-[220px]">
-                  <Input
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    placeholder="To"
-                  />
-                </div>
+            <p className="text-sm font-medium text-gray-700">Client requirements</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              <FilterSelect label="Destination" value={reqFilters.destinationId} onChange={(v) => changed(setReqFilters)({ ...reqFilters, destinationId: v })} all="Any destination" options={leadOptions.destinations.map((o) => ({ value: String(o.id), label: o.name }))} />
+              <FilterSelect label="Property type" value={reqFilters.propertyTypeId} onChange={(v) => changed(setReqFilters)({ ...reqFilters, propertyTypeId: v })} all="Any type" options={leadOptions.propertyTypes.map((o) => ({ value: String(o.id), label: o.name }))} />
+              <FilterSelect label="Purpose" value={reqFilters.purpose} onChange={(v) => changed(setReqFilters)({ ...reqFilters, purpose: v })} all="Any purpose" options={leadOptions.purpose} />
+              <FilterSelect label="Delivery" value={reqFilters.delivery} onChange={(v) => changed(setReqFilters)({ ...reqFilters, delivery: v })} all="Any delivery" options={leadOptions.delivery} />
+              <FilterSelect label="Finishing" value={reqFilters.finishing} onChange={(v) => changed(setReqFilters)({ ...reqFilters, finishing: v })} all="Any finishing" options={leadOptions.finishing} />
+              <div className="space-y-1">
+                <Label htmlFor="leads-budget">Budget fits (EGP)</Label>
+                <Input id="leads-budget" inputMode="decimal" placeholder="e.g. 5,000,000" value={reqFilters.budget} onChange={(e) => changed(setReqFilters)({ ...reqFilters, budget: e.target.value })} />
               </div>
+            </div>
+            {anyFilter && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="mr-2 h-4 w-4" /> Clear all filters
+              </Button>
             )}
           </CardContent>
         </Card>
       )}
 
-      {/* Table Controls */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+          <div className="flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-center">
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">Show</span>
-              <Select value={showEntries.toString()} onValueChange={(v) => setShowEntries(Number(v))}>
-                <SelectTrigger className="w-[80px]">
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                <SelectTrigger className="w-[80px]" aria-label="Rows per page">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
+                  {PAGE_SIZES.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
                 </SelectContent>
               </Select>
               <span className="text-sm text-gray-500">entries</span>
             </div>
 
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => toast.success('Copied to clipboard!')}>
-                <Copy className="w-4 h-4 mr-2" />
-                Copy
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportSelectedToExcel}>
-                <FileSpreadsheet className="w-4 h-4 mr-2" />
-                Excel
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => toast.success('Exported to PDF!')}>
-                <FileIcon className="w-4 h-4 mr-2" />
-                PDF
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setShowColumnsDialog(true)}>
-                <Columns className="w-4 h-4 mr-2" />
+            <div className="flex flex-wrap gap-2">
+              <ExportButtons rows={exportRows} scopeLabel={selected.length ? 'selected lead(s)' : 'lead(s)'} title="Leads" baseName="leads" />
+              <Button variant="outline" size="sm" onClick={() => setShowColumns(true)}>
+                <Columns className="mr-2 h-4 w-4" />
                 Columns
               </Button>
-              {selectedLeads.length > 0 && (
-                <Button 
-                  variant="destructive" 
-                  size="sm"
-                  onClick={handleDeleteSelected}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Selected
+              {selected.length > 0 && (
+                <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Selected ({selected.length})
                 </Button>
               )}
             </div>
 
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
-                placeholder="Search..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 w-[250px]"
+                aria-label="Search leads"
+                placeholder="Search name, phone, email..."
+                value={search}
+                onChange={(e) => changed(setSearch)(e.target.value)}
+                className="w-[260px] pl-10"
               />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Leads Table */}
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -807,103 +483,81 @@ export default function Leads() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
-                    <Checkbox 
-                      checked={selectedLeads.length === paginatedLeads.length && paginatedLeads.length > 0}
-                      onCheckedChange={toggleAllSelection}
-                    />
+                    <Checkbox aria-label="Select all leads on this page" checked={allOnPageSelected} onCheckedChange={togglePage} />
                   </TableHead>
-                  {visibleColumns.id && <TableHead>#</TableHead>}
-                  {visibleColumns.name && <TableHead>Name</TableHead>}
-                  {visibleColumns.action && <TableHead>Action</TableHead>}
-                  {visibleColumns.status && <TableHead>Status</TableHead>}
-                  {visibleColumns.project && <TableHead>Project</TableHead>}
-                  {visibleColumns.assignedTo && <TableHead>Assign To</TableHead>}
-                  {visibleColumns.comments && <TableHead>Comments</TableHead>}
+                  {COLUMNS.filter((c) => columns[c.key]).map((c) => <TableHead key={c.key}>{c.key === 'id' ? '#' : c.label}</TableHead>)}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedLeads.map((lead) => (
-                  <TableRow key={lead.id}>
+                {pageRows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={visibleColumnCount} className="py-10 text-center text-gray-500">
+                      {isLoading && !leads.length ? 'Loading leads...' : leads.length ? 'No leads match the current filters.' : 'No leads yet. Use "Add Lead" to create the first one.'}
+                      {anyFilter && leads.length > 0 && (
+                        <div>
+                          <Button variant="link" onClick={clearFilters}>Clear filters</Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {pageRows.map((lead) => (
+                  <TableRow key={lead.id} data-state={selected.includes(lead.id) ? 'selected' : undefined}>
                     <TableCell>
-                      <Checkbox 
-                        checked={selectedLeads.includes(lead.id)}
-                        onCheckedChange={() => toggleLeadSelection(lead.id)}
-                      />
+                      <Checkbox aria-label={`Select ${lead.name}`} checked={selected.includes(lead.id)} onCheckedChange={() => toggle(lead.id)} />
                     </TableCell>
-                    {visibleColumns.id && <TableCell className="font-medium">{lead.id}</TableCell>}
-                    {visibleColumns.name && <TableCell>{lead.name}</TableCell>}
-                    {visibleColumns.action && (
+                    {columns.id && <TableCell className="font-medium">{lead.id}</TableCell>}
+                    {columns.name && (
                       <TableCell>
-                        <div className="flex gap-1">
-                          {getCallHref(lead.phone) ? (
-                            <Button asChild variant="outline" size="icon" className="h-8 w-8">
-                              <a href={getCallHref(lead.phone)}>
-                                <Phone className="w-4 h-4 text-green-600" />
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="outline" size="icon" className="h-8 w-8" disabled>
-                              <Phone className="w-4 h-4 text-green-600" />
-                            </Button>
-                          )}
-                          {getWhatsAppHref(lead.phone) ? (
-                            <Button asChild variant="default" size="icon" className="h-8 w-8 bg-green-500 hover:bg-green-600">
-                              <a href={getWhatsAppHref(lead.phone)} target="_blank" rel="noreferrer">
-                                <MessageCircle className="w-4 h-4" />
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="default" size="icon" className="h-8 w-8 bg-green-500 hover:bg-green-600" disabled>
-                              <MessageCircle className="w-4 h-4" />
-                            </Button>
-                          )}
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => openEditDialog(lead.id, lead.status)}
-                        >
-                          <Edit className="w-4 h-4 text-gray-600" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  )}
-                    {visibleColumns.status && (
-                      <TableCell>
-                        <Badge 
-                          style={{ 
-                            backgroundColor: getStatusColor(lead.status),
-                            color: 'white'
-                          }}
-                        >
-                          {lead.status}
-                        </Badge>
+                        <div className="font-medium">{lead.name}</div>
+                        {lead.email && <div className="text-xs text-gray-500">{lead.email}</div>}
                       </TableCell>
                     )}
-                    {visibleColumns.project && (
+                    {columns.phone && <TableCell dir="ltr">{lead.phone}</TableCell>}
+                    {columns.action && (
                       <TableCell>
-                        <Select
-                          value={lead.projectId ? lead.projectId.toString() : ''}
-                          onValueChange={(value) => handleProjectAssign(lead.id, value)}
-                        >
-                          <SelectTrigger className="w-[160px]">
+                        <div className="flex gap-1">
+                          <ContactButtons phone={lead.phone} whatsapp={lead.whatsapp} name={lead.name} />
+                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Edit ${lead.name}`} title="Edit lead" onClick={() => openEdit(lead)}>
+                            <Edit className="h-4 w-4 text-gray-600" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
+                    {columns.status && (
+                      <TableCell>
+                        <Badge style={{ backgroundColor: statusColor(lead.status), color: 'white' }}>{lead.status || '-'}</Badge>
+                      </TableCell>
+                    )}
+                    {columns.source && <TableCell>{lead.source || '-'}</TableCell>}
+                    {columns.project && (
+                      <TableCell>
+                        <Select value={lead.projectId ? String(lead.projectId) : NONE} onValueChange={(v) => void changeProject(lead, v)}>
+                          <SelectTrigger className="w-[170px]" aria-label={`Project of ${lead.name}`}>
                             <SelectValue placeholder="Select Project" />
                           </SelectTrigger>
                           <SelectContent>
-                            {projects.map(project => (
-                              <SelectItem key={project.id} value={project.id.toString()}>
-                                {project.name}
-                              </SelectItem>
-                            ))}
+                            <SelectItem value={NONE}>No project</SelectItem>
+                            {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </TableCell>
                     )}
-                    {visibleColumns.assignedTo && <TableCell>{lead.assignedTo || '-'}</TableCell>}
-                    {visibleColumns.comments && (
+                    {columns.requirements && (
+                      <TableCell className="max-w-[260px]">
+                        {(() => {
+                          const text = requirementsSummary(lead.requirements, leadOptions);
+                          return text ? <span className="line-clamp-2 text-xs text-gray-700" title={text}>{text}</span> : <span className="text-xs text-gray-400">Not specified</span>;
+                        })()}
+                      </TableCell>
+                    )}
+                    {columns.assignedTo && <TableCell>{lead.assignedTo || '-'}</TableCell>}
+                    {columns.teamLeader && <TableCell>{lead.teamLeader || '-'}</TableCell>}
+                    {columns.date && <TableCell className="whitespace-nowrap">{lead.date || '-'}</TableCell>}
+                    {columns.comments && (
                       <TableCell>
-                        <Button variant="ghost" size="sm" onClick={() => openComments(lead.id)}>
-                          <FileText className="w-4 h-4 mr-2" />
+                        <Button variant="ghost" size="sm" onClick={() => setCommentsLead(lead)} aria-label={`Comments of ${lead.name}`}>
+                          <FileText className="mr-2 h-4 w-4" />
                           View
                         </Button>
                       </TableCell>
@@ -913,212 +567,127 @@ export default function Leads() {
               </TableBody>
             </Table>
           </div>
-
-          {/* Pagination */}
-          <div className="flex items-center justify-between p-4 border-t">
-            <p className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * showEntries + 1} to{' '}
-              {Math.min(currentPage * showEntries, filteredLeads.length)} of{' '}
-              {filteredLeads.length} entries
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft className="w-4 h-4 mr-2" />
-                Prev
-              </Button>
-              <Button variant="default" size="sm" className="min-w-[40px]">
-                {currentPage}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-              >
-                Next
-                <ChevronRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
-          </div>
+          <TablePagination page={safePage} pageSize={pageSize} total={filtered.length} onPageChange={setPage} />
         </CardContent>
       </Card>
 
-      <Dialog open={showAssignDialog} onOpenChange={setShowAssignDialog}>
-        <DialogContent>
+      {/* Add / edit lead */}
+      <Dialog open={formOpen} onOpenChange={(open) => !saving && setFormOpen(open)}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Assign Selected Leads</DialogTitle>
+            <DialogTitle>{editing ? `Edit Lead #${editing.id}` : 'Add New Lead'}</DialogTitle>
+            <DialogDescription>Fields marked * are required. {CLIENT_PHONE_HINT}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={assignUserId} onValueChange={setAssignUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select User" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role !== 'admin').map(u => (
-                  <SelectItem key={u.id} value={u.id.toString()}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleAssignSelected} disabled={!assignUserId}>
-              Assign
-            </Button>
-          </div>
+          <form
+            className="space-y-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveLead();
+            }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <TextField id="lead-name" label="Name *" value={form.name} error={formErrors.name} onChange={(v) => setField('name', v)} />
+              <TextField id="lead-phone" label="Phone *" type="tel" value={form.phone} error={formErrors.phone} onChange={(v) => setField('phone', v)} placeholder="01012345678" />
+              <TextField id="lead-whatsapp" label="WhatsApp" type="tel" value={form.whatsapp} error={formErrors.whatsapp} onChange={(v) => setField('whatsapp', v)} placeholder="Same as phone if empty" />
+              <TextField id="lead-email" label="Email" type="email" value={form.email} error={formErrors.email} onChange={(v) => setField('email', v)} />
+              <FormSelect id="lead-status" label="Status *" value={form.statusId} error={formErrors.statusId} onChange={(v) => setField('statusId', v)} options={statuses.map((s) => ({ value: String(s.id), label: s.name }))} />
+              <FormSelect id="lead-source" label="Source" value={form.sourceId} allowEmpty onChange={(v) => setField('sourceId', v)} options={leadSources.map((s) => ({ value: String(s.id), label: s.name }))} />
+              <FormSelect id="lead-project" label="Project" value={form.projectId} allowEmpty error={formErrors.projectId} onChange={(v) => setField('projectId', v)} options={projects.map((p) => ({ value: String(p.id), label: p.name }))} />
+            </div>
+
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h3 className="mb-3 font-semibold text-gray-900">Client requirements</h3>
+              <RequirementsFields value={form.requirements} onChange={(next) => setField('requirements', next)} errors={formErrors} idPrefix="lead-req" />
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="lead-comment">Comment{statusOrProjectChanged ? ' *' : ''}</Label>
+              <Textarea
+                id="lead-comment"
+                rows={3}
+                maxLength={5000}
+                value={form.comment}
+                aria-invalid={Boolean(formErrors.comment)}
+                placeholder={statusOrProjectChanged ? 'Required: why did the status / project change?' : 'Optional - saved to the lead history and Reports'}
+                onChange={(e) => setField('comment', e.target.value)}
+              />
+              {formErrors.comment && <p className="text-xs text-red-600" role="alert">{formErrors.comment}</p>}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save Changes' : 'Save Lead'}</Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showBulkReassignDialog} onOpenChange={setShowBulkReassignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reassign Selected Leads</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={bulkReassignUserId} onValueChange={setBulkReassignUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select User" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role !== 'admin' && u.role !== 'franchise_owner').map(u => (
-                  <SelectItem key={u.id} value={u.id.toString()}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleBulkReassign} disabled={!bulkReassignUserId}>
-              Reassign
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AssignDialog open={assignOpen} onOpenChange={setAssignOpen} count={selected.length} noun="lead(s)" users={assignableUsers} busy={assigning} onAssign={assignSelected} />
 
-      <Dialog open={showReassignDialog} onOpenChange={setShowReassignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reassign Lead</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={reassignUserId} onValueChange={setReassignUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select User" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role !== 'admin' && u.role !== 'franchise_owner').map(u => (
-                  <SelectItem key={u.id} value={u.id.toString()}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleReassign} disabled={!reassignUserId}>
-              Reassign
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${selected.length} lead(s)?`}
+        description="The selected leads and their requirements are removed permanently. This cannot be undone."
+        confirmLabel="Delete"
+        busy={deleting}
+        onConfirm={deleteSelected}
+      />
 
-      <Dialog open={showCommentDialog} onOpenChange={setShowCommentDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Lead Comments</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {leadComments.length === 0 && (
-              <p className="text-sm text-gray-500">No comments yet.</p>
-            )}
-            {leadComments.map(comment => (
-              <div key={comment.id} className="p-3 bg-gray-50 rounded-md">
-                <p className="text-sm text-gray-800">{comment.content}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {comment.createdBy} • {comment.createdAt}
-                </p>
-              </div>
-            ))}
-            <Input
-              placeholder="Add a comment"
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-            />
-            <Button onClick={handleAddComment} disabled={!activeLeadId}>
-              Add Comment
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CommentsDialog
+        open={Boolean(commentsLead)}
+        onOpenChange={(open) => !open && setCommentsLead(null)}
+        entityType="lead"
+        entityId={commentsLead?.id ?? null}
+        title={commentsLead ? `Comments - ${commentsLead.name}` : 'Comments'}
+      />
 
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Lead</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Select value={editStatus} onValueChange={setEditStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select Status" />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map(status => (
-                  <SelectItem key={status.id} value={status.name}>
-                    {status.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={editProjectId} onValueChange={setEditProjectId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select Project (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map(project => (
-                  <SelectItem key={project.id} value={project.id.toString()}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <textarea
-              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
-              rows={4}
-              placeholder="Comment (required)"
-              value={editComment}
-              onChange={(e) => setEditComment(e.target.value)}
-            />
-            <Button onClick={handleSaveEdit} disabled={!editLeadId}>
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ColumnsDialog open={showColumns} onOpenChange={setShowColumns} columns={COLUMNS} visible={columns} onChange={setColumns} />
+    </div>
+  );
+}
 
-      <Dialog open={showColumnsDialog} onOpenChange={setShowColumnsDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Visible Columns</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {Object.entries(visibleColumns).map(([key, value]) => (
-              <label key={key} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={value}
-                  onCheckedChange={(checked) =>
-                    setVisibleColumns(prev => ({
-                      ...prev,
-                      [key]: Boolean(checked),
-                    }))
-                  }
-                />
-                <span className="capitalize">{key}</span>
-              </label>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+function FilterSelect({ label, value, onChange, all, options }: { label: string; value: string; onChange: (v: string) => void; all: string; options: { value: string; label: string }[] }) {
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger aria-label={`Filter by ${label.toLowerCase()}`}>
+          <SelectValue placeholder={all} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{all}</SelectItem>
+          {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function TextField({ id, label, value, onChange, error, type = 'text', placeholder }: { id: string; label: string; value: string; onChange: (v: string) => void; error?: string; type?: string; placeholder?: string }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} type={type} dir={type === 'tel' ? 'ltr' : undefined} value={value} placeholder={placeholder} aria-invalid={Boolean(error)} onChange={(e) => onChange(e.target.value)} />
+      {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+function FormSelect({ id, label, value, onChange, options, error, allowEmpty = false }: { id: string; label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; error?: string; allowEmpty?: boolean }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value || (allowEmpty ? NONE : '')} onValueChange={(v) => onChange(v === NONE ? '' : v)}>
+        <SelectTrigger id={id} aria-label={label.replace(' *', '')} aria-invalid={Boolean(error)}>
+          <SelectValue placeholder={`Select ${label.replace(' *', '').toLowerCase()}`} />
+        </SelectTrigger>
+        <SelectContent>
+          {allowEmpty && <SelectItem value={NONE}>None</SelectItem>}
+          {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
     </div>
   );
 }

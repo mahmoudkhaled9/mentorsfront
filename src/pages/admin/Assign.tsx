@@ -30,6 +30,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { jsonRequest } from '@/lib/mutations';
+import { errorMessage } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
@@ -55,7 +57,9 @@ const isAssignedItem = (item: {
 }) => Boolean(item.assignedToId || item.teamLeaderId || item.assignedTo || item.teamLeader);
 
 export default function AdminAssign() {
-  const { leads, setLeads, coldCalls, setColdCalls, users, statuses, projects } = useData();
+  const { leads, setLeads, coldCalls, setColdCalls, users, statuses, projects, reload } = useData();
+  const { user: currentUser, isAdmin } = useAuth();
+  const [assigning, setAssigning] = useState(false);
   const [activeTab, setActiveTab] = useState('leads');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
@@ -82,10 +86,13 @@ export default function AdminAssign() {
     setColdCallOrder((prev) => syncOrder(prev, coldCalls));
   }, [coldCalls]);
 
-  // Get assignment targets
-  const directorsAndSalesManagers = users.filter(
-    u => u.role === 'director' || u.role === 'sales_manager'
+  // Assignment targets. Administrators hand work to directors / sales managers; everyone else can only assign inside
+  // their own team (the users list is already limited to the caller's team by the server, which also enforces it).
+  const directorsAndSalesManagers = users.filter((u) =>
+    u.isActive !== false &&
+    (isAdmin ? u.role === 'director' || u.role === 'sales_manager' : u.id !== currentUser?.id)
   );
+  const targetLabel = isAdmin ? 'Director / Sales Manager' : 'Team Member';
 
   // Get items based on active tab
   const items = activeTab === 'leads' ? leads : coldCalls;
@@ -106,7 +113,8 @@ export default function AdminAssign() {
   const filteredItems = orderedItems.filter(item => {
     const matchesAssignedTeamLeader =
       filterAssignedTeamLeader === 'all' ||
-      (item.teamLeaderId && item.teamLeaderId.toString() === filterAssignedTeamLeader);
+      String(item.assignedToId ?? '') === filterAssignedTeamLeader ||
+      String(item.teamLeaderId ?? '') === filterAssignedTeamLeader;
     return (
       matchesAssignedTeamLeader &&
       (item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -140,51 +148,35 @@ export default function AdminAssign() {
       return;
     }
     if (!selectedTeamLeader) {
-      toast.error('Please select a team leader');
+      toast.error(`Please select a ${targetLabel.toLowerCase()}`);
       return;
     }
 
     const targetUser = directorsAndSalesManagers.find(t => t.id.toString() === selectedTeamLeader);
     if (!targetUser) return;
 
+    if (assigning) return;
+    setAssigning(true);
     try {
       const endpoint = activeTab === 'leads' ? 'leads' : 'cold-calls';
-      await Promise.all(
-        selectedItems.map((itemId) =>
-          jsonRequest(`${endpoint}/${itemId}`, {
-            method: 'PUT',
-            body: { assignedToId: targetUser.id, teamLeaderId: targetUser.id },
-          })
-        )
-      );
+      // One request for the whole selection: the server checks every record and the target, then updates them together.
+      const result = await jsonRequest<{ ok: boolean; count: number }>(`${endpoint}/bulk-assign`, {
+        method: 'POST',
+        body: { ids: selectedItems, assignedToId: targetUser.id },
+      });
+      await reload([activeTab === 'leads' ? 'leads' : 'coldCalls']);
+      if (activeTab === 'leads') setLeadOrder((prev) => moveIdsToBottom(prev, selectedItems));
+      else setColdCallOrder((prev) => moveIdsToBottom(prev, selectedItems));
 
-      if (activeTab === 'leads') {
-        setLeads(prev =>
-          prev.map(item =>
-            selectedItems.includes(item.id)
-              ? { ...item, assignedTo: targetUser.name, assignedToId: targetUser.id, teamLeader: targetUser.name, teamLeaderId: targetUser.id }
-              : item
-          )
-        );
-        setLeadOrder((prev) => moveIdsToBottom(prev, selectedItems));
-      } else {
-        setColdCalls(prev =>
-          prev.map(item =>
-            selectedItems.includes(item.id)
-              ? { ...item, assignedTo: targetUser.name, assignedToId: targetUser.id, teamLeader: targetUser.name, teamLeaderId: targetUser.id }
-              : item
-          )
-        );
-        setColdCallOrder((prev) => moveIdsToBottom(prev, selectedItems));
-      }
-
-      toast.success(`Assigned ${selectedItems.length} ${activeTab} to ${targetUser.name}`);
+      toast.success(`Assigned ${result.count} ${activeTab === 'leads' ? 'leads' : 'cold calls'} to ${targetUser.name}`);
       setSelectedItems([]);
       setSelectedTeamLeader('');
       setFilterAssignedTeamLeader('all');
       setCurrentPage(1);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setAssigning(false);
     }
   };
 
@@ -210,7 +202,7 @@ export default function AdminAssign() {
         setColdCalls(update);
       }
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
@@ -225,7 +217,7 @@ export default function AdminAssign() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Assign Leads & Cold Calls</h1>
         <p className="text-gray-500 mt-1">
-          Assign leads and cold calls to directors or sales managers
+          {isAdmin ? 'Assign leads and cold calls to directors or sales managers' : 'Assign leads and cold calls to members of your team'}
         </p>
       </div>
 
@@ -256,6 +248,7 @@ export default function AdminAssign() {
                       key={size}
                       type="button"
                       variant={pageSize === size ? 'default' : 'outline'}
+                      aria-pressed={pageSize === size}
                       size="sm"
                       onClick={() => setPageSize(size)}
                       className="h-9 min-w-12 px-3"
@@ -279,7 +272,7 @@ export default function AdminAssign() {
                  <Select value={selectedTeamLeader} onValueChange={setSelectedTeamLeader}>
                     <SelectTrigger className="w-[300px] max-w-full h-11 min-w-0 overflow-hidden text-base font-medium justify-start gap-3">
                       <UserCog className="w-4 h-4 mr-2" />
-                      <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="Select Director or Sales Manager" />
+                      <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={`Select ${targetLabel}`} />
                     </SelectTrigger>
                     <SelectContent>
                       {directorsAndSalesManagers.map(target => (
@@ -293,21 +286,21 @@ export default function AdminAssign() {
                   <Button 
                     variant="outline" 
                     onClick={handleAssignTeamLeader} 
-                    disabled={selectedItems.length === 0 || !selectedTeamLeader}
+                    disabled={selectedItems.length === 0 || !selectedTeamLeader || assigning}
                     className="h-11 w-[320px] max-w-full whitespace-nowrap"
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Assign to Director / Sales Manager
+                    {assigning ? 'Assigning...' : `Assign to ${targetLabel}`}
                   </Button>
                 </div>
 
                 <Select value={filterAssignedTeamLeader} onValueChange={setFilterAssignedTeamLeader}>
                   <SelectTrigger className="w-[300px] max-w-full h-11 min-w-0 overflow-hidden text-base font-medium justify-start gap-3">
                     <UserCog className="w-4 h-4 mr-2" />
-                    <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="Filter by Director / Sales Manager" />
+                    <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={`Filter by ${targetLabel}`} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Directors / Sales Managers</SelectItem>
+                    <SelectItem value="all">{isAdmin ? 'All Directors / Sales Managers' : 'Whole team'}</SelectItem>
                     {directorsAndSalesManagers.map(target => (
                       <SelectItem key={target.id} value={target.id.toString()}>
                         {target.name}
@@ -440,6 +433,7 @@ export default function AdminAssign() {
                       key={size}
                       type="button"
                       variant={pageSize === size ? 'default' : 'outline'}
+                      aria-pressed={pageSize === size}
                       size="sm"
                       onClick={() => setPageSize(size)}
                       className="h-9 min-w-12 px-3"
@@ -463,7 +457,7 @@ export default function AdminAssign() {
                 <Select value={selectedTeamLeader} onValueChange={setSelectedTeamLeader}>
                     <SelectTrigger className="w-[300px] max-w-full h-11 min-w-0 overflow-hidden text-base font-medium justify-start gap-3">
                       <UserCog className="w-4 h-4 mr-2" />
-                      <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="Select Director or Sales Manager" />
+                      <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={`Select ${targetLabel}`} />
                     </SelectTrigger>
                     <SelectContent>
                       {directorsAndSalesManagers.map(target => (
@@ -477,21 +471,21 @@ export default function AdminAssign() {
                   <Button 
                     variant="outline" 
                     onClick={handleAssignTeamLeader} 
-                    disabled={selectedItems.length === 0 || !selectedTeamLeader}
+                    disabled={selectedItems.length === 0 || !selectedTeamLeader || assigning}
                     className="h-11 w-[320px] max-w-full whitespace-nowrap"
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Assign to Director / Sales Manager
+                    {assigning ? 'Assigning...' : `Assign to ${targetLabel}`}
                   </Button>
                 </div>
 
                 <Select value={filterAssignedTeamLeader} onValueChange={setFilterAssignedTeamLeader}>
                   <SelectTrigger className="w-[300px] max-w-full h-11 min-w-0 overflow-hidden text-base font-medium justify-start gap-3">
                     <UserCog className="w-4 h-4 mr-2" />
-                    <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="Filter by Director / Sales Manager" />
+                    <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={`Filter by ${targetLabel}`} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Directors / Sales Managers</SelectItem>
+                    <SelectItem value="all">{isAdmin ? 'All Directors / Sales Managers' : 'Whole team'}</SelectItem>
                     {directorsAndSalesManagers.map(target => (
                       <SelectItem key={target.id} value={target.id.toString()}>
                         {target.name}

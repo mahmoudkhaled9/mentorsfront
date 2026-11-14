@@ -53,6 +53,8 @@ export interface Project {
   name: string;
   developerId: number;
   developerName?: string;
+  destinationId?: number;
+  destinationName?: string;
   location?: string;
   startingPrice?: number;
   downPayment?: string;
@@ -97,6 +99,49 @@ export interface Lead {
   comments?: Comment[];
   date: string;
   isPotential: boolean;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  /** Client requirements (leads only). */
+  requirements?: LeadRequirements;
+}
+
+// Client requirements of a lead (stored by the backend in lead_requirements + link tables)
+export type DeliveryOption = 'ready_to_move' | 'within_1_year' | 'within_2_years' | 'within_3_years' | 'within_4_years';
+export type FinishingOption = 'fully_finished' | 'semi_finished' | 'core_and_shell';
+export type PurposeOption = 'investment' | 'personal_living' | 'upgrading';
+
+export interface LeadRequirements {
+  destinationIds: number[];
+  propertyTypeIds: number[];
+  budgetMin: number | null;
+  budgetMax: number | null;
+  delivery: DeliveryOption | null;
+  finishing: FinishingOption | null;
+  downPayment: number | null;
+  installmentPerQuarter: number | null;
+  purpose: PurposeOption | null;
+}
+
+/** An admin-managed choice (destination, property type). */
+export interface CrmOption {
+  id: number;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface ChoiceOption<T extends string = string> {
+  value: T;
+  label: string;
+}
+
+export interface LeadOptions {
+  destinations: CrmOption[];
+  propertyTypes: CrmOption[];
+  delivery: ChoiceOption<DeliveryOption>[];
+  finishing: ChoiceOption<FinishingOption>[];
+  purpose: ChoiceOption<PurposeOption>[];
 }
 
 // Comment/Report Types

@@ -1,737 +1,350 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useData } from '@/contexts/DataContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePersistentState } from '@/hooks/usePersistentState';
+import { ApiError, errorMessage } from '@/lib/api';
+import { jsonRequest } from '@/lib/mutations';
+import { savedId, savedItem } from '@/lib/saved';
+import { checkPhone, CLIENT_PHONE_HINT } from '@/lib/phone';
+import { isAssignerRole, isSuperRole } from '@/lib/roles';
+import type { ExportRow } from '@/lib/exporters';
+import type { Comment, Lead } from '@/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { getVisibleUserIds } from '@/lib/hierarchy';
-import {
-  Plus, 
-  Search, 
-  Filter, 
-  Phone, 
-  MessageCircle,
-  UserPlus,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  FileSpreadsheet,
-  File as FileIcon,
-  Columns,
-  Trash2,
-  Target,
-  XCircle,
-  CheckCircle,
-  Edit
-} from 'lucide-react';
-import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
-import { jsonRequest } from '@/lib/mutations';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AssignDialog } from '@/components/records/AssignDialog';
+import { ColumnsDialog } from '@/components/records/ColumnsDialog';
+import { CommentsDialog } from '@/components/records/CommentsDialog';
+import { ConfirmDialog } from '@/components/records/ConfirmDialog';
+import { ContactButtons } from '@/components/records/ContactButtons';
+import { ExportButtons } from '@/components/records/ExportButtons';
+import { StatusTabs } from '@/components/records/StatusTabs';
+import { TablePagination } from '@/components/records/TablePagination';
+import { pageCount } from '@/lib/table';
+import { exportExcel } from '@/lib/exporters';
+import { Plus, Search, Filter, UserPlus, Columns, Trash2, Target, XCircle, CheckCircle, Edit, FileSpreadsheet, FileText, X } from 'lucide-react';
+
+type ColumnKey = 'id' | 'type' | 'name' | 'phone' | 'status' | 'assignedTo' | 'teamLeader' | 'potential' | 'date' | 'notes' | 'action';
+
+const COLUMNS: { key: ColumnKey; label: string }[] = [
+  { key: 'id', label: 'ID' },
+  { key: 'type', label: 'Type' },
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'status', label: 'Status' },
+  { key: 'assignedTo', label: 'Assigned To' },
+  { key: 'teamLeader', label: 'Team Leader' },
+  { key: 'potential', label: 'Potential' },
+  { key: 'date', label: 'Date' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'action', label: 'Actions' },
+];
+
+const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
+  id: true, type: true, name: true, phone: true, status: true, assignedTo: true, teamLeader: true, potential: true, date: false, notes: false, action: true,
+};
+
+const PAGE_SIZES = [10, 25, 50, 100];
+
+interface CallForm {
+  name: string;
+  phone: string;
+  statusId: string;
+  notes: string;
+  comment: string;
+}
+
+const toExportRows = (calls: Lead[]): ExportRow[] =>
+  calls.map((c) => ({
+    ID: c.id,
+    Name: c.name,
+    Phone: c.phone,
+    Status: c.status,
+    'Assigned To': c.assignedTo ?? '',
+    'Team Leader': c.teamLeader ?? '',
+    Date: c.date ?? '',
+    Potential: c.isPotential ? 'Yes' : 'No',
+    Notes: c.notes ?? '',
+  }));
 
 export default function ColdCalls() {
   const { user } = useAuth();
-  const { coldCalls, setColdCalls, statuses, users, comments, setComments } = useData();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('All');
-  const [potentialFilter, setPotentialFilter] = useState<string>('all');
-  const [selectedCalls, setSelectedCalls] = useState<number[]>([]);
-  const [showEntries, setShowEntries] = useState(10);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showAddDialog, setShowAddDialog] = useState(false);
+  const { coldCalls, setColdCalls, statuses, users, setComments, reload, isLoading } = useData();
+  const canAssign = isAssignerRole(user?.role);
+
+  const [search, setSearch] = useState('');
+  const [statusTab, setStatusTab] = useState('All');
+  const [potential, setPotential] = useState<'all' | 'potential' | 'non-potential'>('all');
+  const [selected, setSelected] = useState<number[]>([]);
+  const [pageSize, setPageSize] = usePersistentState('mentors.coldcalls.pageSize', 10);
+  const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
   const [filterAssignee, setFilterAssignee] = useState('all');
   const [filterTeamLeader, setFilterTeamLeader] = useState('all');
-  const [newCallName, setNewCallName] = useState('');
-  const [newCallPhone, setNewCallPhone] = useState('');
-  const [newCallStatus, setNewCallStatus] = useState('');
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
-  const [assignAgentId, setAssignAgentId] = useState('');
-  const [assignTeamLeaderId, setAssignTeamLeaderId] = useState('');
-  const [showColumnsDialog, setShowColumnsDialog] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState({
-    id: true,
-    type: true,
-    name: true,
-    phone: true,
-    status: true,
-    assignedTo: true,
-    teamLeader: true,
-    potential: true,
-    action: true,
-  });
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [editCallId, setEditCallId] = useState<number | null>(null);
-  const [editStatus, setEditStatus] = useState('');
-  const [editComment, setEditComment] = useState('');
-  const [showReassignDialog, setShowReassignDialog] = useState(false);
-  const [reassignCallId, setReassignCallId] = useState<number | null>(null);
-  const [reassignUserId, setReassignUserId] = useState('');
-  const canReassign = user?.role === 'admin' || user?.role === 'franchise_owner';
-  const [showBulkReassignDialog, setShowBulkReassignDialog] = useState(false);
-  const [bulkReassignUserId, setBulkReassignUserId] = useState('');
-  const canAssign = ['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader'].includes(user?.role ?? '');
+  const [columns, setColumns] = usePersistentState<Record<ColumnKey, boolean>>('mentors.coldcalls.columns', DEFAULT_COLUMNS);
+  const [showColumns, setShowColumns] = useState(false);
 
-  const visibleUserIds = getVisibleUserIds(user, users);
-  const scopedCalls = coldCalls.filter(call => {
-    if (!user) return false;
-    if (user.role === 'admin' || user.role === 'franchise_owner') return true;
-    const assignedVisible = call.assignedToId && visibleUserIds.includes(call.assignedToId);
-    const teamLeaderVisible = call.teamLeaderId && visibleUserIds.includes(call.teamLeaderId);
-    return assignedVisible || teamLeaderVisible;
-  });
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Lead | null>(null);
+  const [form, setForm] = useState<CallForm>({ name: '', phone: '', statusId: '', notes: '', comment: '' });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [commentsCall, setCommentsCall] = useState<Lead | null>(null);
 
-  // Get status counts
-  const getStatusCount = (statusName: string) => {
-    if (statusName === 'All') return scopedCalls.length;
-    return scopedCalls.filter(call => call.status === statusName).length;
+  const resetView = () => {
+    setPage(1);
+    setSelected([]);
+  };
+  const changed = <T,>(setter: (value: T) => void) => (value: T) => {
+    setter(value);
+    resetView();
   };
 
-  // Filter cold calls
-  const filteredCalls = scopedCalls.filter(call => {
-    const matchesSearch = 
-      call.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      call.phone.includes(searchTerm);
-    
-    const matchesStatus = selectedStatus === 'All' || call.status === selectedStatus;
-    
-    const matchesPotential = 
-      potentialFilter === 'all' || 
-      (potentialFilter === 'potential' && call.isPotential) ||
-      (potentialFilter === 'non-potential' && !call.isPotential);
-    
-    const matchesAssignee =
-      filterAssignee === 'all' ||
-      (call.assignedToId && call.assignedToId.toString() === filterAssignee);
-    const matchesTeamLeader =
-      filterTeamLeader === 'all' ||
-      (call.teamLeaderId && call.teamLeaderId.toString() === filterTeamLeader);
-
-    return matchesSearch && matchesStatus && matchesPotential && matchesAssignee && matchesTeamLeader;
-  });
-
-  // Pagination
-  const totalPages = Math.ceil(filteredCalls.length / showEntries);
-  const paginatedCalls = filteredCalls.slice(
-    (currentPage - 1) * showEntries,
-    currentPage * showEntries
-  );
-
-  const toggleCallSelection = (callId: number) => {
-    setSelectedCalls(prev => 
-      prev.includes(callId) 
-        ? prev.filter(id => id !== callId)
-        : [...prev, callId]
-    );
-  };
-
-  const toggleAllSelection = () => {
-    if (selectedCalls.length === paginatedCalls.length) {
-      setSelectedCalls([]);
-    } else {
-      setSelectedCalls(paginatedCalls.map(call => call.id));
+  const term = search.trim().toLowerCase();
+  const termDigits = term.replace(/\D/g, '');
+  const beforeStatus = useMemo(() => coldCalls.filter((c) => {
+    if (term) {
+      const text = `${c.name} ${c.assignedTo ?? ''} ${c.notes ?? ''}`.toLowerCase();
+      const phone = (c.phone ?? '').replace(/\D/g, '');
+      if (!text.includes(term) && !(termDigits.length >= 3 && phone.includes(termDigits))) return false;
     }
+    if (potential === 'potential' && !c.isPotential) return false;
+    if (potential === 'non-potential' && c.isPotential) return false;
+    if (filterAssignee !== 'all' && String(c.assignedToId ?? '') !== filterAssignee) return false;
+    if (filterTeamLeader !== 'all' && String(c.teamLeaderId ?? '') !== filterTeamLeader) return false;
+    return true;
+  }), [coldCalls, term, termDigits, potential, filterAssignee, filterTeamLeader]);
+  const filtered = useMemo(() => (statusTab === 'All' ? beforeStatus : beforeStatus.filter((c) => c.status === statusTab)), [beforeStatus, statusTab]);
+  const statusCount = (name: string) => (name === 'All' ? beforeStatus.length : beforeStatus.filter((c) => c.status === name).length);
+
+  const pages = pageCount(filtered.length, pageSize);
+  const safePage = Math.min(page, pages);
+  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const allOnPageSelected = pageRows.length > 0 && pageRows.every((c) => selected.includes(c.id));
+  const anyFilter = Boolean(term) || potential !== 'all' || filterAssignee !== 'all' || filterTeamLeader !== 'all' || statusTab !== 'All';
+  const clearFilters = () => {
+    setSearch('');
+    setStatusTab('All');
+    setPotential('all');
+    setFilterAssignee('all');
+    setFilterTeamLeader('all');
+    resetView();
   };
 
-  const getStatusColor = (statusName: string) => {
-    const status = statuses.find(s => s.name === statusName);
-    return status?.color || '#6B7280';
-  };
+  const assignableUsers = users.filter((u) => u.isActive !== false && !isSuperRole(u.role));
+  const teamLeaders = users.filter((u) => u.role === 'team_leader');
+  const statusColor = (name: string) => statuses.find((s) => s.name === name)?.color || '#6B7280';
 
-  const sanitizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
-  const normalizeWhatsAppPhone = (phone: string) => {
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) return '';
-    if (digits.startsWith('20')) return digits;
-    if (digits.startsWith('0')) return `20${digits.slice(1)}`;
-    return digits;
-  };
-  const getCallHref = (phone: string) => {
-    const cleanPhone = sanitizePhone(phone);
-    return cleanPhone ? `tel:${cleanPhone}` : '';
-  };
-  const getWhatsAppHref = (phone: string) => {
-    const cleanPhone = normalizeWhatsAppPhone(phone);
-    return cleanPhone ? `https://wa.me/${cleanPhone}` : '';
-  };
+  const exportRows = () => toExportRows(selected.length ? coldCalls.filter((c) => selected.includes(c.id)) : filtered);
 
-  const handleReassign = async () => {
-    if (!reassignCallId || !reassignUserId) {
-      toast.error('Select a user to reassign');
+  const exportAll = () => {
+    if (!coldCalls.length) {
+      toast.error('There are no cold calls to export');
       return;
     }
-    const assignee = users.find(u => u.id.toString() === reassignUserId);
-    if (!assignee) {
-      toast.error('Selected user not found');
+    const n = exportExcel(toExportRows(coldCalls), 'cold-calls-all', 'Cold Calls');
+    toast.success(`Exported all ${n} cold calls to Excel`);
+  };
+
+  const openAdd = () => {
+    setEditing(null);
+    setForm({ name: '', phone: '', statusId: statuses[0] ? String(statuses[0].id) : '', notes: '', comment: '' });
+    setFormErrors({});
+    setFormOpen(true);
+  };
+  const openEdit = (call: Lead) => {
+    setEditing(call);
+    setForm({ name: call.name, phone: call.phone ?? '', statusId: call.statusId ? String(call.statusId) : '', notes: call.notes ?? '', comment: '' });
+    setFormErrors({});
+    setFormOpen(true);
+  };
+  const statusChanged = Boolean(editing) && form.statusId !== (editing?.statusId ? String(editing.statusId) : '');
+
+  const saveCall = async () => {
+    if (saving) return;
+    const problems: Record<string, string> = {};
+    if (!form.name.trim()) problems.name = 'Name is required';
+    const phone = checkPhone(form.phone, { required: true, keep: editing?.phone });
+    if (!phone.ok) problems.phone = phone.message;
+    if (!form.statusId) problems.statusId = 'Choose a status';
+    if (statusChanged && !form.comment.trim()) problems.comment = 'Add a comment explaining the status change';
+    setFormErrors(problems);
+    if (Object.keys(problems).length || !phone.ok) {
+      toast.error('Please fix the highlighted fields');
       return;
     }
-    const teamLeader = assignee.teamLeaderId
-      ? users.find(u => u.id === assignee.teamLeaderId)
-      : undefined;
+    setSaving(true);
     try {
-      await jsonRequest(`cold-calls/${reassignCallId}`, {
-        method: 'PUT',
-        body: { assignedToId: assignee.id, teamLeaderId: teamLeader?.id },
-      });
-      setColdCalls(prev =>
-        prev.map(call =>
-          call.id === reassignCallId
-            ? {
-                ...call,
-                assignedTo: assignee.name,
-                assignedToId: assignee.id,
-                teamLeaderId: teamLeader?.id,
-                teamLeader: teamLeader?.name,
-              }
-            : call
-        )
-      );
-      toast.success('Cold call reassigned');
-      setShowReassignDialog(false);
-      setReassignCallId(null);
-      setReassignUserId('');
+      const body = { name: form.name.trim(), phone: phone.value, statusId: Number(form.statusId), notes: form.notes.trim() };
+      const result = editing
+        ? await jsonRequest<{ item: Lead }>(`cold-calls/${editing.id}`, { method: 'PUT', body })
+        : await jsonRequest<{ item: Lead }>('cold-calls', { method: 'POST', body });
+      const saved = savedItem<Lead>(result);
+      const savedRecordId = saved?.id ?? savedId(result) ?? editing?.id ?? null;
+      if (saved) setColdCalls((prev) => (editing ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
+      else await reload(['coldCalls']); // unexpected answer shape: show what the server has
+      if (form.comment.trim() && savedRecordId) {
+        try {
+          const comment = await jsonRequest<{ item: Comment }>('comments', { method: 'POST', body: { entityType: 'cold_call', entityId: savedRecordId, content: form.comment.trim() } });
+          const savedComment = savedItem<Comment>(comment);
+          if (savedComment) setComments((prev) => [...prev, savedComment]);
+          else void reload(['comments']);
+        } catch (error) {
+          toast.error(`The cold call was saved, but the comment was not: ${errorMessage(error)}`);
+        }
+      }
+      void reload(['reports']);
+      toast.success(editing ? 'Cold call updated' : 'Cold call added');
+      setFormOpen(false);
     } catch (error) {
-      toast.error((error as Error).message);
+      if (error instanceof ApiError && Object.keys(error.fieldErrors).length) setFormErrors((prev) => ({ ...prev, ...error.fieldErrors }));
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleBulkReassign = async () => {
-    if (selectedCalls.length === 0) {
-      toast.error('Select at least one cold call to reassign');
-      return;
-    }
-    if (!bulkReassignUserId) {
-      toast.error('Select a user to reassign');
-      return;
-    }
-    const assignee = users.find(u => u.id.toString() === bulkReassignUserId);
-    if (!assignee) {
-      toast.error('Selected user not found');
-      return;
-    }
-    const teamLeader = assignee.teamLeaderId
-      ? users.find(u => u.id === assignee.teamLeaderId)
-      : undefined;
+  const assignSelected = async (userId: number) => {
+    setAssigning(true);
     try {
-      await Promise.all(
-        selectedCalls.map((callId) =>
-          jsonRequest(`cold-calls/${callId}`, {
-            method: 'PUT',
-            body: { assignedToId: assignee.id, teamLeaderId: teamLeader?.id },
-          })
-        )
-      );
-      setColdCalls(prev =>
-        prev.map(call =>
-          selectedCalls.includes(call.id)
-            ? {
-                ...call,
-                assignedTo: assignee.name,
-                assignedToId: assignee.id,
-                teamLeaderId: teamLeader?.id,
-                teamLeader: teamLeader?.name,
-              }
-            : call
-        )
-      );
-      toast.success(`Reassigned ${selectedCalls.length} cold calls`);
-      setSelectedCalls([]);
-      setShowBulkReassignDialog(false);
-      setBulkReassignUserId('');
+      const result = await jsonRequest<{ count: number }>('cold-calls/bulk-assign', { method: 'POST', body: { ids: selected, assignedToId: userId } });
+      await reload(['coldCalls']);
+      toast.success(`Assigned ${result.count} cold call(s) to ${users.find((u) => u.id === userId)?.name ?? 'the selected user'}`);
+      setSelected([]);
+      setAssignOpen(false);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setAssigning(false);
     }
   };
 
-  const handleAddColdCall = async () => {
-    if (!newCallName.trim() || !newCallPhone.trim() || !newCallStatus) {
-      toast.error('Please fill in name, phone, and status');
-      return;
-    }
-
-    const statusObj = statuses.find(s => s.name === newCallStatus);
-    const isPotential =
-      newCallStatus.toLowerCase().includes('potential') &&
-      !newCallStatus.toLowerCase().includes('non');
-    const currentAssignee = user && user.role !== 'admin' && user.role !== 'franchise_owner' ? user : null;
-    const currentTeamLeaderId = currentAssignee
-      ? (currentAssignee.role === 'team_leader' ? currentAssignee.id : currentAssignee.teamLeaderId)
-      : undefined;
-    const currentTeamLeader = currentTeamLeaderId
-      ? users.find(u => u.id === currentTeamLeaderId)
-      : undefined;
-
+  const deleteSelected = async () => {
+    setDeleting(true);
     try {
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('cold-calls', {
-        method: 'POST',
-        body: {
-          name: newCallName.trim(),
-          phone: newCallPhone.trim(),
-          statusId: statusObj?.id ?? 0,
-          assignedToId: currentAssignee?.id ?? null,
-          teamLeaderId: currentTeamLeaderId ?? null,
-          date: new Date().toISOString().split('T')[0],
-        },
-      });
-
-      const nextId = created.id ?? (coldCalls.length > 0 ? Math.max(...coldCalls.map(c => c.id)) + 1 : 1);
-      setColdCalls(prev => [
-        ...prev,
-        {
-          id: nextId,
-          type: 'Coldcall',
-          name: newCallName.trim(),
-          phone: newCallPhone.trim(),
-          status: newCallStatus,
-          statusId: statusObj?.id ?? 0,
-          assignedTo: currentAssignee?.name,
-          assignedToId: currentAssignee?.id,
-          teamLeader: currentTeamLeader?.name,
-          teamLeaderId: currentTeamLeaderId,
-          date: new Date().toISOString().split('T')[0],
-          isPotential,
-        },
-      ]);
-
-      toast.success('Cold call added successfully!');
-      setShowAddDialog(false);
-      setNewCallName('');
-      setNewCallPhone('');
-      setNewCallStatus('');
+      const result = await jsonRequest<{ count: number }>('cold-calls/bulk-delete', { method: 'POST', body: { ids: selected } });
+      setColdCalls((prev) => prev.filter((c) => !selected.includes(c.id)));
+      toast.success(`Deleted ${result.count} cold call(s)`);
+      setSelected([]);
+      setConfirmDelete(false);
+      void reload(['reports', 'comments']);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const handleDeleteSelected = async () => {
-    if (selectedCalls.length === 0) {
-      return;
-    }
-    try {
-      await Promise.all(selectedCalls.map((callId) => jsonRequest(`cold-calls/${callId}`, { method: 'DELETE' })));
-      setColdCalls(prev => prev.filter(call => !selectedCalls.includes(call.id)));
-      toast.success(`Deleted ${selectedCalls.length} cold calls`);
-      setSelectedCalls([]);
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const handleAssignSelected = async () => {
-    if (!assignAgentId && !assignTeamLeaderId) {
-      toast.error('Select an agent or team leader');
-      return;
-    }
-
-    const agent = users.find(u => u.id.toString() === assignAgentId);
-    const teamLeader = users.find(u => u.id.toString() === assignTeamLeaderId);
-
-    try {
-      await Promise.all(
-        selectedCalls.map((callId) =>
-          jsonRequest(`cold-calls/${callId}`, {
-            method: 'PUT',
-            body: {
-              assignedToId: agent?.id || teamLeader?.id,
-              teamLeaderId: teamLeader?.id ?? agent?.teamLeaderId,
-            },
-          })
-        )
-      );
-      setColdCalls(prev =>
-        prev.map(call =>
-          selectedCalls.includes(call.id)
-            ? {
-                ...call,
-                assignedTo: agent?.name || call.assignedTo,
-                assignedToId: agent?.id || call.assignedToId,
-                teamLeader: teamLeader?.name || call.teamLeader,
-                teamLeaderId: teamLeader?.id || call.teamLeaderId,
-              }
-            : call
-        )
-      );
-
-      toast.success('Assignment updated');
-      setSelectedCalls([]);
-      setAssignAgentId('');
-      setAssignTeamLeaderId('');
-      setShowAssignDialog(false);
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const openEditDialog = (callId: number, currentStatus: string) => {
-    setEditCallId(callId);
-    setEditStatus(currentStatus);
-    setEditComment('');
-    setShowEditDialog(true);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editCallId) return;
-    if (!editComment.trim()) {
-      toast.error('Comment is required');
-      return;
-    }
-
-    const statusObj = statuses.find(s => s.name === editStatus);
-    const isPotential =
-      editStatus.toLowerCase().includes('potential') &&
-      !editStatus.toLowerCase().includes('non');
-
-    try {
-      await jsonRequest(`cold-calls/${editCallId}`, {
-        method: 'PUT',
-        body: {
-          statusId: statusObj?.id ?? undefined,
-        },
-      });
-
-      const createdBy = user?.name || 'Unknown';
-      const createdById = user?.id || 0;
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('comments', {
-        method: 'POST',
-        body: {
-          leadId: editCallId,
-          entityType: 'cold_call',
-          entityId: editCallId,
-          content: editComment.trim(),
-          createdBy,
-          createdById,
-        },
-      });
-
-      setColdCalls(prev =>
-        prev.map(call =>
-          call.id === editCallId
-            ? {
-                ...call,
-                status: editStatus,
-                statusId: statusObj?.id ?? call.statusId,
-                isPotential,
-              }
-            : call
-        )
-      );
-
-      const nextId = created.id ?? (comments.length > 0 ? Math.max(...comments.map(c => c.id)) + 1 : 1);
-      setComments(prev => [
-        ...prev,
-        {
-          id: nextId,
-          leadId: editCallId,
-          entityType: 'cold_call',
-          entityId: editCallId,
-          content: editComment.trim(),
-          createdBy,
-          createdById,
-          createdAt: new Date().toLocaleString(),
-        },
-      ]);
-
-      toast.success('Cold call updated and comment added');
-      setShowEditDialog(false);
-    } catch (error) {
-      toast.error((error as Error).message);
-    }
-  };
-
-  const exportSelectedToExcel = () => {
-    if (selectedCalls.length === 0) {
-      toast.error('Select at least one cold call to export');
-      return;
-    }
-    const selected = coldCalls.filter(call => selectedCalls.includes(call.id));
-    const rows = selected.map(call => ({
-      ID: call.id,
-      Name: call.name,
-      Phone: call.phone,
-      Status: call.status,
-      AssignedTo: call.assignedTo || '',
-      TeamLeader: call.teamLeader || '',
-      Date: call.date || '',
-      Potential: call.isPotential ? 'Yes' : 'No',
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'SelectedColdCalls');
-    XLSX.writeFile(workbook, `selected-coldcalls-${new Date().toISOString().slice(0,10)}.xlsx`);
-    toast.success('Exported selected cold calls to Excel');
-  };
+  const toggle = (id: number) => setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const togglePage = () =>
+    setSelected((prev) => (allOnPageSelected ? prev.filter((id) => !pageRows.some((c) => c.id === id)) : [...new Set([...prev, ...pageRows.map((c) => c.id)])]));
+  const visibleColumnCount = 1 + COLUMNS.filter((c) => columns[c.key]).length;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900">Cold Calls List</h1>
-          <Badge variant="secondary" className="text-lg">
-            {filteredCalls.length}
-          </Badge>
+          <Badge variant="secondary" className="text-lg" data-testid="coldcalls-count">{filtered.length}</Badge>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={() => setShowFilters((prev) => !prev)}>
-            <Filter className="w-4 h-4 mr-2" />
+        <div className="flex flex-wrap gap-2">
+          <Button variant={showFilters ? 'default' : 'outline'} aria-expanded={showFilters} onClick={() => setShowFilters((prev) => !prev)}>
+            <Filter className="mr-2 h-4 w-4" />
             Filters
           </Button>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-            <DialogTrigger asChild>
-              <Button variant="default">
-                <Plus className="w-4 h-4 mr-2" />
-                Add New coldcall
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New Cold Call</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <Input placeholder="Name" value={newCallName} onChange={(e) => setNewCallName(e.target.value)} />
-                <Input placeholder="Phone" value={newCallPhone} onChange={(e) => setNewCallPhone(e.target.value)} />
-                <Select value={newCallStatus} onValueChange={setNewCallStatus}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map(status => (
-                      <SelectItem key={status.id} value={status.name}>
-                        {status.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleAddColdCall}>
-                  Save Cold Call
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Button
-            variant="default"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => toast.success('Exported all cold calls to Excel!')}
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-2" />
+          <Button onClick={openAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add New Cold Call
+          </Button>
+          <Button className="bg-green-600 hover:bg-green-700" onClick={exportAll}>
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
             Export All to Excel
           </Button>
           {canAssign && (
-            <Button
-              variant="default"
-              className="bg-cyan-500 hover:bg-cyan-600"
-              onClick={() => {
-                if (selectedCalls.length === 0) {
-                  toast.error('Select at least one cold call to assign');
-                  return;
-                }
-                setShowAssignDialog(true);
-              }}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Assign
-            </Button>
-          )}
-          {canReassign && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (selectedCalls.length === 0) {
-                  toast.error('Select at least one cold call to reassign');
-                  return;
-                }
-                setShowBulkReassignDialog(true);
-              }}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Reassign
+            <Button className="bg-cyan-500 hover:bg-cyan-600" onClick={() => (selected.length ? setAssignOpen(true) : toast.error('Select at least one cold call to assign'))}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Assign{selected.length ? ` (${selected.length})` : ''}
             </Button>
           )}
         </div>
       </div>
 
-      {/* Status Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        <Button
-          variant={selectedStatus === 'All' ? 'default' : 'outline'}
-          onClick={() => setSelectedStatus('All')}
-          className="whitespace-nowrap"
-        >
-          All
-          <Badge variant="secondary" className="ml-2">
-            {getStatusCount('All')}
-          </Badge>
-        </Button>
-        {statuses.map(status => (
-          <Button
-            key={status.id}
-            variant={selectedStatus === status.name ? 'default' : 'outline'}
-            onClick={() => setSelectedStatus(status.name)}
-            className="whitespace-nowrap"
-            style={selectedStatus === status.name ? {} : { borderColor: status.color }}
-          >
-            {status.name}
-            <Badge 
-              variant="secondary" 
-              className="ml-2"
-              style={{ backgroundColor: status.color + '20', color: status.color }}
-            >
-              {getStatusCount(status.name)}
-            </Badge>
-          </Button>
-        ))}
-      </div>
+      <StatusTabs statuses={statuses} selected={statusTab} onSelect={changed(setStatusTab)} count={statusCount} />
 
       {showFilters && (
         <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Select value={filterAssignee} onValueChange={setFilterAssignee}>
-                <SelectTrigger className="w-full sm:w-[220px]">
-                  <SelectValue placeholder="Filter by Assignee" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Assignees</SelectItem>
-                  {users.filter(u => u.role === 'agent').map(agent => (
-                    <SelectItem key={agent.id} value={agent.id.toString()}>
-                      {agent.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={filterTeamLeader} onValueChange={setFilterTeamLeader}>
-                <SelectTrigger className="w-full sm:w-[220px]">
-                  <SelectValue placeholder="Filter by Team Leader" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Team Leaders</SelectItem>
-                  {users.filter(u => u.role === 'team_leader').map(tl => (
-                    <SelectItem key={tl.id} value={tl.id.toString()}>
-                      {tl.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-end">
+            <PersonFilter label="Assigned to" value={filterAssignee} onChange={changed(setFilterAssignee)} all="All Assignees" people={users} />
+            <PersonFilter label="Team leader" value={filterTeamLeader} onChange={changed(setFilterTeamLeader)} all="All Team Leaders" people={teamLeaders} />
+            {anyFilter && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="mr-2 h-4 w-4" /> Clear all filters
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* Potential Filters */}
-      <div className="flex gap-2">
-        <Button
-          variant={potentialFilter === 'all' ? 'default' : 'outline'}
-          onClick={() => setPotentialFilter('all')}
-          size="sm"
-        >
-          All
-        </Button>
-        <Button
-          variant={potentialFilter === 'potential' ? 'default' : 'outline'}
-          onClick={() => setPotentialFilter('potential')}
-          size="sm"
-          className={potentialFilter === 'potential' ? 'bg-green-600' : ''}
-        >
-          <Target className="w-4 h-4 mr-2" />
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Potential filter">
+        <Button size="sm" aria-pressed={potential === 'all'} variant={potential === 'all' ? 'default' : 'outline'} onClick={() => changed(setPotential)('all')}>All</Button>
+        <Button size="sm" aria-pressed={potential === 'potential'} variant={potential === 'potential' ? 'default' : 'outline'} className={potential === 'potential' ? 'bg-green-600' : ''} onClick={() => changed(setPotential)('potential')}>
+          <Target className="mr-2 h-4 w-4" />
           Potentials
         </Button>
-        <Button
-          variant={potentialFilter === 'non-potential' ? 'default' : 'outline'}
-          onClick={() => setPotentialFilter('non-potential')}
-          size="sm"
-          className={potentialFilter === 'non-potential' ? 'bg-gray-600' : ''}
-        >
-          <XCircle className="w-4 h-4 mr-2" />
+        <Button size="sm" aria-pressed={potential === 'non-potential'} variant={potential === 'non-potential' ? 'default' : 'outline'} className={potential === 'non-potential' ? 'bg-gray-600' : ''} onClick={() => changed(setPotential)('non-potential')}>
+          <XCircle className="mr-2 h-4 w-4" />
           Non Potentials
         </Button>
       </div>
 
-      {/* Table Controls */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+          <div className="flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-center">
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">Show</span>
-              <Select value={showEntries.toString()} onValueChange={(v) => setShowEntries(Number(v))}>
-                <SelectTrigger className="w-[80px]">
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                <SelectTrigger className="w-[80px]" aria-label="Rows per page">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
+                  {PAGE_SIZES.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
                 </SelectContent>
               </Select>
               <span className="text-sm text-gray-500">entries</span>
             </div>
-
-            <div className="flex gap-2 flex-wrap">
-              <Button variant="outline" size="sm" onClick={() => toast.success('Copied to clipboard!')}>
-                <Copy className="w-4 h-4 mr-2" />
-                Copy
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportSelectedToExcel}>
-                <FileSpreadsheet className="w-4 h-4 mr-2" />
-                Excel
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => toast.success('Exported to PDF!')}>
-                <FileIcon className="w-4 h-4 mr-2" />
-                PDF
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setShowColumnsDialog(true)}>
-                <Columns className="w-4 h-4 mr-2" />
+            <div className="flex flex-wrap gap-2">
+              <ExportButtons rows={exportRows} scopeLabel={selected.length ? 'selected cold call(s)' : 'cold call(s)'} title="Cold Calls" baseName="cold-calls" />
+              <Button variant="outline" size="sm" onClick={() => setShowColumns(true)}>
+                <Columns className="mr-2 h-4 w-4" />
                 Columns
               </Button>
-              {selectedCalls.length > 0 && (
-                <Button 
-                  variant="destructive" 
-                  size="sm"
-                  onClick={handleDeleteSelected}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Selected
+              {selected.length > 0 && (
+                <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Selected ({selected.length})
                 </Button>
               )}
             </div>
-
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <Input
-                placeholder="Search..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 w-[250px]"
-              />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input aria-label="Search cold calls" placeholder="Search name or phone..." value={search} onChange={(e) => changed(setSearch)(e.target.value)} className="w-[250px] pl-10" />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Cold Calls Table */}
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -739,100 +352,60 @@ export default function ColdCalls() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
-                    <Checkbox 
-                      checked={selectedCalls.length === paginatedCalls.length && paginatedCalls.length > 0}
-                      onCheckedChange={toggleAllSelection}
-                    />
+                    <Checkbox aria-label="Select all cold calls on this page" checked={allOnPageSelected} onCheckedChange={togglePage} />
                   </TableHead>
-                  {visibleColumns.id && <TableHead>#</TableHead>}
-                  {visibleColumns.type && <TableHead>Type</TableHead>}
-                  {visibleColumns.name && <TableHead>Name</TableHead>}
-                  {visibleColumns.phone && <TableHead>Phone</TableHead>}
-                  {visibleColumns.status && <TableHead>Status</TableHead>}
-                  {visibleColumns.assignedTo && <TableHead>Assign To</TableHead>}
-                  {visibleColumns.teamLeader && <TableHead>Team Leader</TableHead>}
-                  {visibleColumns.potential && <TableHead>Potential</TableHead>}
-                  {visibleColumns.action && <TableHead>Action</TableHead>}
+                  {COLUMNS.filter((c) => columns[c.key]).map((c) => <TableHead key={c.key}>{c.key === 'id' ? '#' : c.label}</TableHead>)}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedCalls.map((call) => (
-                  <TableRow key={call.id}>
-                    <TableCell>
-                      <Checkbox 
-                        checked={selectedCalls.includes(call.id)}
-                        onCheckedChange={() => toggleCallSelection(call.id)}
-                      />
+                {pageRows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={visibleColumnCount} className="py-10 text-center text-gray-500">
+                      {isLoading && !coldCalls.length ? 'Loading cold calls...' : coldCalls.length ? 'No cold calls match the current filters.' : 'No cold calls yet.'}
+                      {anyFilter && coldCalls.length > 0 && (
+                        <div>
+                          <Button variant="link" onClick={clearFilters}>Clear filters</Button>
+                        </div>
+                      )}
                     </TableCell>
-                    {visibleColumns.id && <TableCell className="font-medium">{call.id}</TableCell>}
-                    {visibleColumns.type && (
+                  </TableRow>
+                )}
+                {pageRows.map((call) => (
+                  <TableRow key={call.id} data-state={selected.includes(call.id) ? 'selected' : undefined}>
+                    <TableCell>
+                      <Checkbox aria-label={`Select ${call.name}`} checked={selected.includes(call.id)} onCheckedChange={() => toggle(call.id)} />
+                    </TableCell>
+                    {columns.id && <TableCell className="font-medium">{call.id}</TableCell>}
+                    {columns.type && <TableCell><Badge variant="outline">{call.type}</Badge></TableCell>}
+                    {columns.name && <TableCell>{call.name}</TableCell>}
+                    {columns.phone && <TableCell dir="ltr">{call.phone}</TableCell>}
+                    {columns.status && (
                       <TableCell>
-                        <Badge variant="outline">{call.type}</Badge>
+                        <Badge style={{ backgroundColor: statusColor(call.status), color: 'white' }}>{call.status || '-'}</Badge>
                       </TableCell>
                     )}
-                    {visibleColumns.name && <TableCell>{call.name}</TableCell>}
-                    {visibleColumns.phone && <TableCell>{call.phone}</TableCell>}
-                    {visibleColumns.status && (
-                      <TableCell>
-                        <Badge 
-                          style={{ 
-                            backgroundColor: getStatusColor(call.status),
-                            color: 'white'
-                          }}
-                        >
-                          {call.status}
-                        </Badge>
-                      </TableCell>
-                    )}
-                    {visibleColumns.assignedTo && <TableCell>{call.assignedTo || '-'}</TableCell>}
-                    {visibleColumns.teamLeader && <TableCell>{call.teamLeader || '-'}</TableCell>}
-                    {visibleColumns.potential && (
+                    {columns.assignedTo && <TableCell>{call.assignedTo || '-'}</TableCell>}
+                    {columns.teamLeader && <TableCell>{call.teamLeader || '-'}</TableCell>}
+                    {columns.potential && (
                       <TableCell>
                         {call.isPotential ? (
-                          <Badge className="bg-green-500">
-                            <CheckCircle className="w-3 h-3 mr-1" />
-                            Yes
-                          </Badge>
+                          <Badge className="bg-green-500"><CheckCircle className="mr-1 h-3 w-3" />Yes</Badge>
                         ) : (
-                          <Badge variant="secondary">
-                            <XCircle className="w-3 h-3 mr-1" />
-                            No
-                          </Badge>
+                          <Badge variant="secondary"><XCircle className="mr-1 h-3 w-3" />No</Badge>
                         )}
                       </TableCell>
                     )}
-                    {visibleColumns.action && (
+                    {columns.date && <TableCell className="whitespace-nowrap">{call.date || '-'}</TableCell>}
+                    {columns.notes && <TableCell className="max-w-[240px] truncate" title={call.notes}>{call.notes || '-'}</TableCell>}
+                    {columns.action && (
                       <TableCell>
                         <div className="flex gap-1">
-                          {getCallHref(call.phone) ? (
-                            <Button asChild variant="outline" size="icon" className="h-8 w-8">
-                              <a href={getCallHref(call.phone)}>
-                                <Phone className="w-4 h-4 text-green-600" />
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="outline" size="icon" className="h-8 w-8" disabled>
-                              <Phone className="w-4 h-4 text-green-600" />
-                            </Button>
-                          )}
-                          {getWhatsAppHref(call.phone) ? (
-                            <Button asChild variant="default" size="icon" className="h-8 w-8 bg-green-500 hover:bg-green-600">
-                              <a href={getWhatsAppHref(call.phone)} target="_blank" rel="noreferrer">
-                                <MessageCircle className="w-4 h-4" />
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="default" size="icon" className="h-8 w-8 bg-green-500 hover:bg-green-600" disabled>
-                              <MessageCircle className="w-4 h-4" />
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => openEditDialog(call.id, call.status)}
-                          >
-                            <Edit className="w-4 h-4 text-gray-600" />
+                          <ContactButtons phone={call.phone} name={call.name} />
+                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Edit ${call.name}`} title="Edit cold call" onClick={() => openEdit(call)}>
+                            <Edit className="h-4 w-4 text-gray-600" />
+                          </Button>
+                          <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Comments of ${call.name}`} title="Comments" onClick={() => setCommentsCall(call)}>
+                            <FileText className="h-4 w-4 text-gray-600" />
                           </Button>
                         </div>
                       </TableCell>
@@ -842,183 +415,106 @@ export default function ColdCalls() {
               </TableBody>
             </Table>
           </div>
-
-          {/* Pagination */}
-          <div className="flex items-center justify-between p-4 border-t">
-            <p className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * showEntries + 1} to{' '}
-              {Math.min(currentPage * showEntries, filteredCalls.length)} of{' '}
-              {filteredCalls.length} entries
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft className="w-4 h-4 mr-2" />
-                Prev
-              </Button>
-              <Button variant="default" size="sm" className="min-w-[40px]">
-                {currentPage}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-              >
-                Next
-                <ChevronRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
-          </div>
+          <TablePagination page={safePage} pageSize={pageSize} total={filtered.length} onPageChange={setPage} />
         </CardContent>
       </Card>
 
-      <Dialog open={showAssignDialog} onOpenChange={setShowAssignDialog}>
-        <DialogContent>
+      <Dialog open={formOpen} onOpenChange={(open) => !saving && setFormOpen(open)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Assign Selected Cold Calls</DialogTitle>
+            <DialogTitle>{editing ? `Edit Cold Call #${editing.id}` : 'Add New Cold Call'}</DialogTitle>
+            <DialogDescription>Fields marked * are required. {CLIENT_PHONE_HINT}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={assignAgentId} onValueChange={setAssignAgentId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select Agent" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role === 'agent').map(agent => (
-                  <SelectItem key={agent.id} value={agent.id.toString()}>
-                    {agent.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={assignTeamLeaderId} onValueChange={setAssignTeamLeaderId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select Team Leader" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role === 'team_leader').map(tl => (
-                  <SelectItem key={tl.id} value={tl.id.toString()}>
-                    {tl.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleAssignSelected}>
-              Apply Assignment
-            </Button>
-          </div>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveCall();
+            }}
+          >
+            <Field id="call-name" label="Name *" error={formErrors.name}>
+              <Input id="call-name" value={form.name} aria-invalid={Boolean(formErrors.name)} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
+            </Field>
+            <Field id="call-phone" label="Phone *" error={formErrors.phone}>
+              <Input id="call-phone" type="tel" dir="ltr" placeholder="01012345678" value={form.phone} aria-invalid={Boolean(formErrors.phone)} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
+            </Field>
+            <Field id="call-status" label="Status *" error={formErrors.statusId}>
+              <Select value={form.statusId} onValueChange={(v) => setForm((p) => ({ ...p, statusId: v }))}>
+                <SelectTrigger id="call-status" aria-label="Status">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field id="call-notes" label="Notes">
+              <Textarea id="call-notes" rows={2} maxLength={5000} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
+            </Field>
+            <Field id="call-comment" label={`Comment${statusChanged ? ' *' : ''}`} error={formErrors.comment}>
+              <Textarea
+                id="call-comment"
+                rows={3}
+                maxLength={5000}
+                value={form.comment}
+                aria-invalid={Boolean(formErrors.comment)}
+                placeholder={statusChanged ? 'Required: why did the status change?' : 'Optional - saved to the history and Reports'}
+                onChange={(e) => setForm((p) => ({ ...p, comment: e.target.value }))}
+              />
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save Changes' : 'Save Cold Call'}</Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showBulkReassignDialog} onOpenChange={setShowBulkReassignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reassign Selected Cold Calls</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={bulkReassignUserId} onValueChange={setBulkReassignUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select User" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role !== 'admin' && u.role !== 'franchise_owner').map(u => (
-                  <SelectItem key={u.id} value={u.id.toString()}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleBulkReassign} disabled={!bulkReassignUserId}>
-              Reassign
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AssignDialog open={assignOpen} onOpenChange={setAssignOpen} count={selected.length} noun="cold call(s)" users={assignableUsers} busy={assigning} onAssign={assignSelected} />
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${selected.length} cold call(s)?`}
+        description="The selected cold calls are removed permanently. This cannot be undone."
+        confirmLabel="Delete"
+        busy={deleting}
+        onConfirm={deleteSelected}
+      />
+      <CommentsDialog
+        open={Boolean(commentsCall)}
+        onOpenChange={(open) => !open && setCommentsCall(null)}
+        entityType="cold_call"
+        entityId={commentsCall?.id ?? null}
+        title={commentsCall ? `Comments - ${commentsCall.name}` : 'Comments'}
+      />
+      <ColumnsDialog open={showColumns} onOpenChange={setShowColumns} columns={COLUMNS} visible={columns} onChange={setColumns} />
+    </div>
+  );
+}
 
-      <Dialog open={showReassignDialog} onOpenChange={setShowReassignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reassign Cold Call</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={reassignUserId} onValueChange={setReassignUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select User" />
-              </SelectTrigger>
-              <SelectContent>
-                {users.filter(u => u.role !== 'admin' && u.role !== 'franchise_owner').map(u => (
-                  <SelectItem key={u.id} value={u.id.toString()}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleReassign} disabled={!reassignUserId}>
-              Reassign
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+function Field({ id, label, error, children }: { id: string; label: string; error?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+    </div>
+  );
+}
 
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Cold Call</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Select value={editStatus} onValueChange={setEditStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select Status" />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map(status => (
-                  <SelectItem key={status.id} value={status.name}>
-                    {status.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <textarea
-              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
-              rows={4}
-              placeholder="Comment (required)"
-              value={editComment}
-              onChange={(e) => setEditComment(e.target.value)}
-            />
-            <Button onClick={handleSaveEdit} disabled={!editCallId}>
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showColumnsDialog} onOpenChange={setShowColumnsDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Visible Columns</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {Object.entries(visibleColumns).map(([key, value]) => (
-              <label key={key} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={value}
-                  onCheckedChange={(checked) =>
-                    setVisibleColumns(prev => ({
-                      ...prev,
-                      [key]: Boolean(checked),
-                    }))
-                  }
-                />
-                <span className="capitalize">{key}</span>
-              </label>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+function PersonFilter({ label, value, onChange, all, people }: { label: string; value: string; onChange: (v: string) => void; all: string; people: { id: number; name: string }[] }) {
+  return (
+    <div className="w-full space-y-1 sm:w-[220px]">
+      <Label>{label}</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger aria-label={`Filter by ${label.toLowerCase()}`}>
+          <SelectValue placeholder={all} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{all}</SelectItem>
+          {people.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

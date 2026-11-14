@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { apiFetch, emitAuthChange } from '@/lib/api';
+import { emitAuthChange, errorMessage } from '@/lib/api';
+import { jsonRequest } from '@/lib/mutations';
+import { checkPhone } from '@/lib/phone';
+import { passwordProblem } from '@/lib/passwords';
+import type { User } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export default function Profile() {
-  const { user, updateCurrentUser } = useAuth();
+  const { user, updateCurrentUser, replaceToken } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -73,7 +77,7 @@ export default function Profile() {
       setAvatar(cropped);
       setSelectedAvatarName(file.name);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
@@ -90,24 +94,17 @@ export default function Profile() {
       toast.error('Name, email, and phone are required');
       return;
     }
+    const phoneCheck = checkPhone(phone, { keep: user?.phone, kind: 'employee' });
+    if (!phoneCheck.ok) {
+      toast.error(phoneCheck.message);
+      return;
+    }
     setSavingProfile(true);
     try {
-      const response = await apiFetch('profile', {
+      const payload = await jsonRequest<{ user?: User }>('profile', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: user?.id,
-          name: name.trim(),
-          email: email.trim(),
-          phone: phone.trim(),
-          avatar: avatar.trim(),
-        }),
+        body: { name: name.trim(), email: email.trim(), phone: phoneCheck.value, avatar: avatar.trim() },
       });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error ?? 'Failed to update profile');
-      }
-      const payload = await response.json();
       const nextUser = payload?.user ?? user ?? null;
       if (nextUser) {
         updateCurrentUser({
@@ -118,7 +115,7 @@ export default function Profile() {
       emitAuthChange();
       toast.success('Profile updated');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     } finally {
       setSavingProfile(false);
     }
@@ -133,26 +130,25 @@ export default function Profile() {
       toast.error('New password confirmation does not match');
       return;
     }
+    const weak = passwordProblem(newPassword, { email: user?.email, name: user?.name });
+    if (weak) {
+      toast.error(weak);
+      return;
+    }
     setSavingPassword(true);
     try {
-      const response = await apiFetch('auth/change-password', {
+      const result = await jsonRequest<{ token?: string }>('auth/change-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentPassword,
-          newPassword,
-        }),
+        body: { currentPassword, newPassword },
       });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error ?? 'Failed to change password');
-      }
+      // Changing the password signs out every older session; keep THIS one by switching to the new token.
+      if (result.token) replaceToken(result.token);
       toast.success('Password changed');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     } finally {
       setSavingPassword(false);
     }
@@ -199,7 +195,7 @@ export default function Profile() {
                   >
                     Choose File
                   </Button>
-                  <Button variant="outline" size="sm" type="button" onClick={handleRemoveAvatar}>
+                  <Button variant="outline" size="sm" type="button" onClick={handleRemoveAvatar} disabled={!avatar} title={avatar ? undefined : 'No picture to remove'}>
                     Remove Picture
                   </Button>
                 </div>

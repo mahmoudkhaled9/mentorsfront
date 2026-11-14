@@ -25,17 +25,19 @@ export default function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+    if (!email.trim() || !password) {
+      toast.error('Enter your email and password');
+      return;
+    }
     setIsLoading(true);
-
     try {
-      const success = await login(email, password);
-      if (success) {
+      const result = await login(email, password);
+      if (result.ok) {
         toast.success('Login successful!');
       } else {
-        toast.error('Invalid email or password');
+        toast.error(result.message);
       }
-    } catch (error) {
-      toast.error('An error occurred during login');
     } finally {
       setIsLoading(false);
     }
@@ -73,6 +75,7 @@ export default function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="pl-10"
+                  autoComplete="username"
                   required
                 />
               </div>
@@ -89,10 +92,12 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10 pr-10"
+                  autoComplete="current-password"
                   required
                 />
                 <button
                   type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                 >

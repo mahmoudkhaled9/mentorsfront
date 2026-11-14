@@ -24,6 +24,8 @@ import AdminTitles from '@/pages/admin/Titles';
 import AdminStatuses from '@/pages/admin/Statuses';
 import AdminSources from '@/pages/admin/Sources';
 import AdminProjects from '@/pages/admin/Projects';
+import AdminDestinations from '@/pages/admin/Destinations';
+import AdminPropertyTypes from '@/pages/admin/PropertyTypes';
 import AdminAssign from '@/pages/admin/Assign';
 import AdminUploadData from '@/pages/admin/UploadData';
 
@@ -72,7 +74,9 @@ function AppRoutes() {
         <Route path="admin/statuses" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminStatuses /></PrivateRoute>} />
         <Route path="admin/sources" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminSources /></PrivateRoute>} />
         <Route path="admin/projects" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminProjects /></PrivateRoute>} />
-        <Route path="admin/assign" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner', 'team_leader']}><AdminAssign /></PrivateRoute>} />
+        <Route path="admin/destinations" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminDestinations /></PrivateRoute>} />
+        <Route path="admin/property-types" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminPropertyTypes /></PrivateRoute>} />
+        <Route path="admin/assign" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader']}><AdminAssign /></PrivateRoute>} />
         <Route path="admin/upload-data" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminUploadData /></PrivateRoute>} />
       </Route>
       
@@ -87,7 +91,8 @@ function App() {
       <AuthProvider>
         <Router>
           <AppRoutes />
-          <Toaster position="top-right" />
+          {/* bottom-right: top-right covered the page action buttons (Add / Export / Assign) while a message was shown */}
+          <Toaster position="bottom-right" />
         </Router>
       </AuthProvider>
     </DataProvider>

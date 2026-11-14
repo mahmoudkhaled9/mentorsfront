@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData } from '@/contexts/DataContext';
 import { useAuth } from '@/hooks/useAuth';
-import { calculateCommission } from '@/data/mockData';
+import { calculateCommission } from '@/lib/commission';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,8 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { getVisibleUserIds } from '@/lib/hierarchy';
-import type { DealFileItem } from '@/types';
+import type { Deal, DealFileItem } from '@/types';
 import {
   Select,
   SelectContent,
@@ -44,13 +43,18 @@ import {
   Eye,
   CheckCircle,
   Clock,
-  XCircle
+  XCircle,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { jsonRequest } from '@/lib/mutations';
+import { savedItem } from '@/lib/saved';
+import { checkPhone, telHref, whatsappHref } from '@/lib/phone';
+import { errorMessage } from '@/lib/api';
+import { ConfirmDialog } from '@/components/records/ConfirmDialog';
 
 export default function Deals() {
-  const { deals, setDeals, users, projects, developers } = useData();
+  const { deals, setDeals, users, projects, reload } = useData();
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -75,12 +79,54 @@ export default function Deals() {
   const canDateFilter = user?.role === 'admin' || user?.role === 'franchise_owner';
   const canManageDeals = user?.role === 'admin' || user?.role === 'franchise_owner';
 
-  const visibleUserIds = getVisibleUserIds(user, users);
-  const visibleDeals = deals.filter(deal => {
-    if (!user) return false;
-    if (user.role === 'admin' || user.role === 'franchise_owner') return true;
-    return visibleUserIds.includes(deal.agentId);
-  });
+  const [dealBusy, setDealBusy] = useState(false);
+  const [confirmDeleteDeal, setConfirmDeleteDeal] = useState(false);
+  // The server already returns only the deals this user may see (their own team's); no second filter here.
+  const visibleDeals = deals;
+  const MAX_FILE_BYTES = 5 * 1024 * 1024;
+  const BLOCKED_TYPES = /^(text\/html|image\/svg\+xml|application\/(xhtml\+xml|javascript|x-javascript|xml)|text\/(javascript|xml))$/i;
+
+  /** Puts the saved deal into the list; if the answer has no usable record, reloads the deals from the server. */
+  const replaceDeal = (result: unknown) => {
+    const item = savedItem<Deal>(result);
+    if (!item) {
+      setSelectedDeal(null);
+      void reload(['deals']);
+      return;
+    }
+    setDeals((prev) => prev.map((d) => (d.id === item.id ? item : d)));
+    setSelectedDeal((prev) => (prev && prev.id === item.id ? item : prev));
+  };
+
+  const updateDealStatus = async (status: Deal['status']) => {
+    if (!selectedDeal || status === selectedDeal.status) return;
+    setDealBusy(true);
+    try {
+      const result = await jsonRequest<{ item: Deal }>(`deals/${selectedDeal.id}`, { method: 'PUT', body: { status } });
+      replaceDeal(result);
+      toast.success(`Deal marked as ${status}`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setDealBusy(false);
+    }
+  };
+
+  const deleteDeal = async () => {
+    if (!selectedDeal) return;
+    setDealBusy(true);
+    try {
+      await jsonRequest(`deals/${selectedDeal.id}`, { method: 'DELETE' });
+      setDeals((prev) => prev.filter((d) => d.id !== selectedDeal.id));
+      toast.success('Deal deleted');
+      setConfirmDeleteDeal(false);
+      setSelectedDeal(null);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setDealBusy(false);
+    }
+  };
 
   // Calculate total commission
   const totalCommission = visibleDeals.reduce((sum, deal) => sum + deal.commission, 0);
@@ -121,8 +167,6 @@ export default function Deals() {
     return value.toLocaleString();
   };
 
-  const sanitizePhone = (phone?: string) => (phone ? phone.replace(/\D/g, '') : '');
-
   const fileToPayload = (file: File): Promise<DealFileItem> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -138,9 +182,13 @@ export default function Deals() {
       reader.readAsDataURL(file);
     });
 
+  /** Reads the chosen files; refuses oversized files and types a browser would execute (the server refuses them too). */
   const filesToPayload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return [];
-    return Promise.all(Array.from(fileList).map((file) => fileToPayload(file)));
+    const files = Array.from(fileList);
+    const refused = files.filter((f) => f.size > MAX_FILE_BYTES || BLOCKED_TYPES.test(f.type));
+    refused.forEach((f) => toast.error(f.size > MAX_FILE_BYTES ? `${f.name} is larger than 5 MB` : `${f.name}: HTML, SVG, XML and script files cannot be attached`));
+    return Promise.all(files.filter((f) => !refused.includes(f)).map((file) => fileToPayload(file)));
   };
 
   const appendFilesToDeal = async (
@@ -159,37 +207,15 @@ export default function Deals() {
         ? [...((selectedDeal.reservationImages ?? []) as DealFileItem[]), ...payload]
         : selectedDeal.reservationImages ?? [];
     try {
-      await jsonRequest(`deals/${selectedDeal.id}`, {
+      // Only the file lists are sent; the server keeps every other field as stored.
+      const result = await jsonRequest<{ item: Deal }>(`deals/${selectedDeal.id}`, {
         method: 'PUT',
-        body: {
-          ...selectedDeal,
-          attachments: nextAttachments,
-          reservationImages: nextReservationImages,
-        },
+        body: { attachments: nextAttachments, reservationImages: nextReservationImages },
       });
-      setDeals(prev =>
-        prev.map(deal =>
-          deal.id === selectedDeal.id
-            ? {
-                ...deal,
-                attachments: nextAttachments,
-                reservationImages: nextReservationImages,
-              }
-            : deal
-        )
-      );
-      setSelectedDeal(prev =>
-        prev
-          ? {
-              ...prev,
-              attachments: nextAttachments,
-              reservationImages: nextReservationImages,
-            }
-          : prev
-      );
+      replaceDeal(result);
       toast.success(`${target === 'attachments' ? 'Attachments' : 'Reservation images'} added`);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
@@ -211,10 +237,14 @@ export default function Deals() {
     }
 
     const clientName = newClientName.trim();
-    const clientPhone = newClientPhone.trim();
+    const phoneCheck = checkPhone(newClientPhone);
+    if (!phoneCheck.ok) {
+      toast.error(phoneCheck.message);
+      return;
+    }
+    const clientPhone = phoneCheck.value;
     const agent = users.find(u => u.id.toString() === newAgentId);
     const project = projects.find(p => p.id.toString() === newProjectId);
-    const developer = developers.find(d => d.id === project?.developerId);
 
     if (!agent || !project) {
       toast.error('Invalid agent or project');
@@ -241,7 +271,7 @@ export default function Deals() {
     }
 
     try {
-      const created = await jsonRequest<{ ok: boolean; id?: number }>('deals', {
+      const created = await jsonRequest<{ ok: boolean; id: number; item: Deal }>('deals', {
         method: 'POST',
         body: {
           leadName: clientName,
@@ -258,42 +288,15 @@ export default function Deals() {
           contractPrice,
           contractDate: newContractDate,
           unitNumber: newUnitNumber.trim(),
-          createdAt: new Date().toISOString(),
           date: newContractDate,
           attachments: newAttachments,
           reservationImages: newReservationImages,
         },
       });
 
-      const nextId = created.id ?? (deals.length > 0 ? Math.max(...deals.map(d => d.id)) + 1 : 1);
-      setDeals(prev => [
-        ...prev,
-        {
-          id: nextId,
-          leadId: Date.now(),
-          leadName: clientName,
-          clientPhone,
-          agentId: agent.id,
-          agentName: agent.name,
-          projectId: project.id,
-          projectName: project.name,
-          developerId: project.developerId,
-          developerName: developer?.name || '',
-          amount,
-          commission,
-          status: newStatus,
-          stage: newStage,
-          reservationPrice,
-          reservationDate: newReservationDate,
-          contractPrice,
-          contractDate: newContractDate,
-          unitNumber: newUnitNumber.trim(),
-          createdAt: new Date().toLocaleString(),
-          date: newContractDate,
-          attachments: newAttachments,
-          reservationImages: newReservationImages,
-        },
-      ]);
+      const createdDeal = savedItem<Deal>(created);
+      if (createdDeal) setDeals(prev => [...prev, createdDeal]);
+      else await reload(['deals']);
 
       toast.success('Deal added successfully!');
       setShowAddDialog(false);
@@ -312,7 +315,7 @@ export default function Deals() {
       setNewAttachments([]);
       setNewReservationImages([]);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
@@ -650,6 +653,25 @@ export default function Deals() {
           </DialogHeader>
           {selectedDeal && (
             <div className="space-y-4 pb-2 pr-1">
+              {canManageDeals && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gray-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Status</span>
+                    <Select value={selectedDeal.status} onValueChange={(v) => void updateDealStatus(v as Deal['status'])} disabled={dealBusy}>
+                      <SelectTrigger className="w-[150px]" aria-label="Deal status"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button variant="destructive" size="sm" disabled={dealBusy} onClick={() => setConfirmDeleteDeal(true)}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Deal
+                  </Button>
+                </div>
+              )}
               <div className="flex items-center justify-between p-4 border rounded-xl bg-white">
                 <div>
                   <p className="text-sm font-semibold text-gray-900">
@@ -660,28 +682,20 @@ export default function Deals() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    disabled={!sanitizePhone(selectedDeal.clientPhone)}
-                    onClick={() => {
-                      const phone = sanitizePhone(selectedDeal.clientPhone);
-                      if (phone) window.open(`tel:${phone}`);
-                    }}
-                  >
-                    <Phone className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    disabled={!sanitizePhone(selectedDeal.clientPhone)}
-                    onClick={() => {
-                      const phone = sanitizePhone(selectedDeal.clientPhone);
-                      if (phone) window.open(`https://wa.me/${phone}`);
-                    }}
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                  </Button>
+                  {telHref(selectedDeal.clientPhone) ? (
+                    <Button asChild variant="outline" size="icon" aria-label="Call client">
+                      <a href={telHref(selectedDeal.clientPhone)}><Phone className="w-4 h-4" /></a>
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="icon" disabled aria-label="No phone number"><Phone className="w-4 h-4" /></Button>
+                  )}
+                  {whatsappHref(selectedDeal.clientPhone) ? (
+                    <Button asChild variant="outline" size="icon" aria-label="WhatsApp client">
+                      <a href={whatsappHref(selectedDeal.clientPhone)} target="_blank" rel="noreferrer noopener"><MessageCircle className="w-4 h-4" /></a>
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="icon" disabled aria-label="No WhatsApp number"><MessageCircle className="w-4 h-4" /></Button>
+                  )}
                 </div>
               </div>
 
@@ -755,12 +769,18 @@ export default function Deals() {
                       <p className="text-sm font-semibold text-gray-900">Attachments</p>
                       <p className="text-xs text-gray-500">Upload contracts, IDs, or notes.</p>
                     </div>
-                    <Input
-                      type="file"
-                      multiple
-                      className="max-w-48"
-                      onChange={async (e) => appendFilesToDeal('attachments', e.target.files)}
-                    />
+                    {canManageDeals && (
+                      <Input
+                        type="file"
+                        multiple
+                        aria-label="Add attachments"
+                        className="max-w-48"
+                        onChange={async (e) => {
+                          await appendFilesToDeal('attachments', e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    )}
                   </div>
                   <div className="space-y-2">
                     {(selectedDeal.attachments ?? []).length === 0 ? (
@@ -787,13 +807,19 @@ export default function Deals() {
                       <p className="text-sm font-semibold text-gray-900">Reservation Images</p>
                       <p className="text-xs text-gray-500">Upload reservation proof or images.</p>
                     </div>
-                    <Input
-                      type="file"
-                      multiple
-                      accept="image/*"
-                      className="max-w-48"
-                      onChange={async (e) => appendFilesToDeal('reservationImages', e.target.files)}
-                    />
+                    {canManageDeals && (
+                      <Input
+                        type="file"
+                        multiple
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        aria-label="Add reservation images"
+                        className="max-w-48"
+                        onChange={async (e) => {
+                          await appendFilesToDeal('reservationImages', e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {(selectedDeal.reservationImages ?? []).length === 0 ? (
@@ -818,6 +844,16 @@ export default function Deals() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmDeleteDeal}
+        onOpenChange={setConfirmDeleteDeal}
+        title="Delete this deal?"
+        description={`The deal for ${selectedDeal?.leadName ?? 'this client'} and its attachments are removed permanently.`}
+        confirmLabel="Delete"
+        busy={dealBusy}
+        onConfirm={deleteDeal}
+      />
 
       {/* Commission Info */}
       <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">

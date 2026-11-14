@@ -1,0 +1,42 @@
+# Frontend CI: typecheck, lint, unit tests, production build, then the browser tests + interaction audit against the
+# real backend (checked out next to this repo, started in in-memory demo mode - no database, no secrets).
+name: frontend-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mentorsfront
+      # The backend lives in its own repository. Set the repository variable BACKEND_REPO (owner/name) and, if that
+      # repository is private, a secret BACKEND_REPO_TOKEN with read access.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.BACKEND_REPO }}
+          token: ${{ secrets.BACKEND_REPO_TOKEN || github.token }}
+          path: yourmentorsapp
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+        working-directory: yourmentorsapp
+      - run: npm ci --no-audit --no-fund
+        working-directory: mentorsfront
+      - run: npm install --no-save --no-audit --no-fund playwright@1 && npx playwright install --with-deps chromium
+        working-directory: mentorsfront
+      - run: npm run test:all
+        working-directory: mentorsfront
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            mentorsfront/test-results/e2e
+            mentorsfront/test-results/audit
+          retention-days: 14

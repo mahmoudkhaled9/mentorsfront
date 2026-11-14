@@ -4,13 +4,6 @@ import { useData } from '@/contexts/DataContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   ArrowLeft, 
   Phone, 
@@ -18,32 +11,28 @@ import {
   Globe, 
   Mail, 
   Settings,
-  Building2,
   User,
   MapPin
 } from 'lucide-react';
-import { jsonRequest } from '@/lib/mutations';
+import { useAuth } from '@/hooks/useAuth';
+import { DeveloperFormDialog } from '@/components/developers/DeveloperFormDialog';
+import { DeveloperLogo } from '@/components/developers/DeveloperLogo';
+import { telHref, whatsappHref } from '@/lib/phone';
 
 export default function DeveloperDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { developers, setDevelopers, projects } = useData();
+  const { developers, setDevelopers, projects, isLoading } = useData();
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editLogo, setEditLogo] = useState('');
-  const [editPhone, setEditPhone] = useState('');
-  const [editWhatsApp, setEditWhatsApp] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-  const [editWebsite, setEditWebsite] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  
+  const { isAdmin } = useAuth();
+
   const developer = developers.find(d => d.id === Number(id));
   const developerProjects = projects.filter(p => p.developerId === Number(id));
 
   if (!developer) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">Developer not found</p>
+        <p className="text-gray-500">{isLoading ? 'Loading developer...' : 'Developer not found'}</p>
         <Button onClick={() => navigate('/developers')} className="mt-4">
           Back to Developers
         </Button>
@@ -51,68 +40,22 @@ export default function DeveloperDetails() {
     );
   }
 
-  const openEditDialog = () => {
-    setEditName(developer.name);
-    setEditLogo(developer.logo);
-    setEditPhone(developer.phone);
-    setEditWhatsApp(developer.whatsapp);
-    setEditEmail(developer.email);
-    setEditWebsite(developer.website);
-    setEditDescription(developer.description);
-    setShowEditDialog(true);
-  };
-
-  const handleSaveEdit = async () => {
-    try {
-      await jsonRequest(`developers/${developer.id}`, {
-        method: 'PUT',
-        body: {
-          name: editName.trim() || developer.name,
-          logo: editLogo.trim() || developer.logo,
-          phone: editPhone.trim() || developer.phone,
-          whatsapp: editWhatsApp.trim() || developer.whatsapp,
-          email: editEmail.trim() || developer.email,
-          website: editWebsite.trim() || developer.website,
-          description: editDescription.trim() || developer.description,
-        },
-      });
-      setDevelopers(prev =>
-        prev.map(dev =>
-          dev.id === developer.id
-            ? {
-                ...dev,
-                name: editName.trim() || dev.name,
-                logo: editLogo.trim() || dev.logo,
-                phone: editPhone.trim() || dev.phone,
-                whatsapp: editWhatsApp.trim() || dev.whatsapp,
-                email: editEmail.trim() || dev.email,
-                website: editWebsite.trim() || dev.website,
-                description: editDescription.trim() || dev.description,
-                lastUpdated: new Date().toLocaleDateString(),
-              }
-            : dev
-        )
-      );
-      setShowEditDialog(false);
-    } catch (error) {
-      // Keep the dialog open so the user can retry with corrected data.
-      console.error(error);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="outline" size="icon" onClick={() => navigate('/developers')}>
+          <Button variant="outline" size="icon" aria-label="Back to developers" onClick={() => navigate('/developers')}>
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
         </div>
-        <Button variant="outline" size="icon" onClick={openEditDialog}>
-          <Settings className="w-4 h-4" />
-        </Button>
+        {isAdmin && (
+          <Button variant="outline" onClick={() => setShowEditDialog(true)}>
+            <Settings className="w-4 h-4 mr-2" />
+            Edit Developer
+          </Button>
+        )}
       </div>
 
       {/* About Developer & Contacts */}
@@ -124,15 +67,7 @@ export default function DeveloperDetails() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-              {developer.logo ? (
-                <img
-                  src={developer.logo}
-                  alt={developer.name}
-                  className="w-16 h-16 object-contain"
-                />
-              ) : (
-                <Building2 className="w-16 h-16 text-gray-400" />
-              )}
+              <DeveloperLogo src={developer.logo} name={developer.name} className="w-16 h-16 object-contain" />
               <div>
                 <h3 className="font-semibold text-lg">{developer.name}</h3>
               </div>
@@ -159,39 +94,42 @@ export default function DeveloperDetails() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex gap-2">
-              <Button 
-                variant="default" 
-                className="flex-1 bg-green-600 hover:bg-green-700"
-                onClick={() => window.open(`tel:${developer.phone}`)}
-              >
-                <Phone className="w-4 h-4 mr-2" />
-                {developer.phone}
-              </Button>
-              <Button 
-                variant="default" 
-                className="flex-1 bg-green-600 hover:bg-green-700"
-                onClick={() => window.open(`https://wa.me/${developer.whatsapp.replace(/\+/g, '')}`)}
-              >
-                <MessageCircle className="w-4 h-4 mr-2" />
-                {developer.whatsapp}
-              </Button>
+              {developer.phone ? (
+                <Button asChild variant="default" className="flex-1 bg-green-600 hover:bg-green-700">
+                  <a href={telHref(developer.phone)}>
+                    <Phone className="w-4 h-4 mr-2" />
+                    {developer.phone}
+                  </a>
+                </Button>
+              ) : null}
+              {whatsappHref(developer.whatsapp) ? (
+                <Button asChild variant="default" className="flex-1 bg-green-600 hover:bg-green-700">
+                  <a href={whatsappHref(developer.whatsapp)} target="_blank" rel="noreferrer noopener">
+                    <MessageCircle className="w-4 h-4 mr-2" />
+                    {developer.whatsapp}
+                  </a>
+                </Button>
+              ) : null}
             </div>
-            <Button 
-              variant="default" 
-              className="w-full bg-gray-900 hover:bg-gray-800"
-              onClick={() => window.open(developer.website, '_blank')}
-            >
-              <Globe className="w-4 h-4 mr-2" />
-              {developer.website}
-            </Button>
-            <Button 
-              variant="default" 
-              className="w-full bg-cyan-500 hover:bg-cyan-600"
-              onClick={() => window.open(`mailto:${developer.email}`)}
-            >
-              <Mail className="w-4 h-4 mr-2" />
-              {developer.email}
-            </Button>
+            {/^https?:\/\//i.test(developer.website) ? (
+              <Button asChild variant="default" className="w-full bg-gray-900 hover:bg-gray-800">
+                <a href={developer.website} target="_blank" rel="noreferrer noopener">
+                  <Globe className="w-4 h-4 mr-2" />
+                  {developer.website}
+                </a>
+              </Button>
+            ) : null}
+            {developer.email ? (
+              <Button asChild variant="default" className="w-full bg-cyan-500 hover:bg-cyan-600">
+                <a href={`mailto:${developer.email}`}>
+                  <Mail className="w-4 h-4 mr-2" />
+                  {developer.email}
+                </a>
+              </Button>
+            ) : null}
+            {!developer.phone && !developer.whatsapp && !developer.website && !developer.email ? (
+              <p className="text-sm text-gray-500">No contact details yet.</p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -202,7 +140,7 @@ export default function DeveloperDetails() {
           <CardTitle className="text-lg">About Developer</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-700 leading-relaxed">{developer.description}</p>
+          <p className="text-gray-700 leading-relaxed">{developer.description || 'No description yet.'}</p>
           
           {developer.establishedYear && (
             <div className="mt-6">
@@ -224,21 +162,21 @@ export default function DeveloperDetails() {
                         <p className="font-medium">
                           {project.name} {project.description && `(${project.description})`}
                         </p>
-                        {project.startingPrice && (
+                        {project.startingPrice ? (
                           <p className="text-sm text-gray-600 mt-1">
-                            Starting price: {(project.startingPrice / 1000000).toFixed(0)}M EGP
+                            Starting price: {project.startingPrice.toLocaleString('en-US')} EGP
                           </p>
-                        )}
+                        ) : null}
                         {project.downPayment && (
                           <p className="text-sm text-gray-600">
                             {project.downPayment}
                           </p>
                         )}
                       </div>
-                      {project.location && (
+                      {(project.location || project.destinationName) && (
                         <Badge variant="outline" className="flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
-                          {project.location}
+                          {[project.destinationName, project.location].filter(Boolean).join(' - ')}
                         </Badge>
                       )}
                     </div>
@@ -250,23 +188,12 @@ export default function DeveloperDetails() {
         </CardContent>
       </Card>
 
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Developer</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <Input placeholder="Developer Name" value={editName} onChange={(e) => setEditName(e.target.value)} />
-            <Input placeholder="Logo URL" value={editLogo} onChange={(e) => setEditLogo(e.target.value)} />
-            <Input placeholder="Phone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
-            <Input placeholder="WhatsApp" value={editWhatsApp} onChange={(e) => setEditWhatsApp(e.target.value)} />
-            <Input placeholder="Email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
-            <Input placeholder="Website" value={editWebsite} onChange={(e) => setEditWebsite(e.target.value)} />
-            <Input placeholder="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
-            <Button onClick={handleSaveEdit}>Save Changes</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <DeveloperFormDialog
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        developer={developer}
+        onSaved={(saved) => setDevelopers((prev) => prev.map((d) => (d.id === saved.id ? saved : d)))}
+      />
     </div>
   );
 }

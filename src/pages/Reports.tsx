@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { jsonRequest } from '@/lib/mutations';
+import { errorMessage } from '@/lib/api';
+import { ConfirmDialog } from '@/components/records/ConfirmDialog';
 import type { Report, Lead } from '@/types';
 
 type ReportTarget = {
@@ -37,10 +39,12 @@ export default function Reports() {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingComment, setEditingComment] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [newCommentContent, setNewCommentContent] = useState('');
   const [selectedCommentTarget, setSelectedCommentTarget] = useState('');
   const { user } = useAuth();
-  const { reports, setReports, leads, coldCalls, users } = useData();
+  const { reports, setReports, leads, coldCalls, users, reload } = useData();
 
   const visibleUserIds = getVisibleUserIds(user, users);
   const visibleReports = reports.filter((report) => {
@@ -128,10 +132,14 @@ export default function Reports() {
 
   const handleSaveEdit = async () => {
     if (!editingComment) return;
+    if (!editContent.trim()) {
+      toast.error('The comment cannot be empty');
+      return;
+    }
     try {
       await jsonRequest(`comments/${editingComment}`, {
         method: 'PUT',
-        body: { content: editContent },
+        body: { content: editContent.trim() },
       });
       setReports((prev) =>
         prev.map((report) =>
@@ -140,21 +148,29 @@ export default function Reports() {
             : report
         )
       );
+      void reload(['comments', 'reports']);
       toast.success('Comment updated successfully!');
       setEditingComment(null);
       setEditContent('');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
-  const handleDelete = async (commentId: number) => {
+  const handleDelete = async () => {
+    if (deletingId === null) return;
+    const commentId = deletingId;
+    setDeleteBusy(true);
     try {
       await jsonRequest(`comments/${commentId}`, { method: 'DELETE' });
       setReports((prev) => prev.filter((report) => report.commentId !== commentId));
+      void reload(['comments', 'reports']);
       toast.success('Comment deleted successfully!');
+      setDeletingId(null);
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -178,19 +194,19 @@ export default function Reports() {
           entityType,
           entityId: selectedId,
           content: newCommentContent.trim(),
-          createdBy: user?.name || 'Unknown',
-          createdById: user?.id || 0,
         },
       });
       const commentId = created.id ?? (reports.length > 0 ? Math.max(...reports.map((item) => item.commentId)) + 1 : 1);
       const reportSnapshot = buildReportSnapshot(entityType, selectedId, commentId, newCommentContent.trim());
       setReports((prev) => [...prev, reportSnapshot]);
+      // replace the local snapshot with what the server stored (names, status, team leader)
+      void reload(['comments', 'reports']);
       toast.success('Comment added successfully!');
       setShowAddDialog(false);
       setNewCommentContent('');
       setSelectedCommentTarget('');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
     }
   };
 
@@ -301,6 +317,7 @@ export default function Reports() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
+                          aria-label="Edit comment"
                           onClick={() => handleEdit(report)}
                         >
                           <Edit className="w-4 h-4 text-gray-500" />
@@ -309,7 +326,8 @@ export default function Reports() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => handleDelete(report.commentId)}
+                          aria-label="Delete comment"
+                          onClick={() => setDeletingId(report.commentId)}
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
                         </Button>
@@ -367,6 +385,15 @@ export default function Reports() {
           </div>
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={deletingId !== null}
+        onOpenChange={(open) => !open && setDeletingId(null)}
+        title="Delete this comment?"
+        description="The comment is removed from the lead history and from Reports. This cannot be undone."
+        confirmLabel="Delete"
+        busy={deleteBusy}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

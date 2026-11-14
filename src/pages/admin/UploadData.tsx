@@ -17,6 +17,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { LeadType, Project } from '@/types';
 import { jsonRequest } from '@/lib/mutations';
+import { errorMessage } from '@/lib/api';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -127,7 +128,7 @@ const pickNameValue = (value: unknown) => {
 };
 
 export default function UploadData() {
-  const { leads, setLeads, coldCalls, setColdCalls, statuses, projects, setProjects, developers } = useData();
+  const { leads, coldCalls, statuses, projects, developers, reload } = useData();
   const [importTarget, setImportTarget] = useState<ImportTarget>('leads');
   const [file, setFile] = useState<File | null>(null);
   const [stats, setStats] = useState<ImportStats | null>(null);
@@ -191,7 +192,7 @@ export default function UploadData() {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
-      const pageText = content.items.map((item: any) => item.str).join(' ');
+      const pageText = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
       text += ` ${pageText}`;
     }
     return text;
@@ -291,32 +292,31 @@ export default function UploadData() {
             },
           });
         }
-        setProjects(prev => [...prev, ...addedProjects]);
       }
 
+      // The server re-checks every row (phone format, duplicates against the WHOLE database, not only what this user
+      // can see) and reports what it actually stored; those numbers are what we show.
+      let result = { count: 0, duplicates: 0, invalid: 0 };
       if (newItems.length > 0) {
-        await jsonRequest(importTarget === 'leads' ? 'leads/import' : 'cold-calls/import', {
+        result = await jsonRequest<{ count: number; duplicates?: number; invalid?: number }>(importTarget === 'leads' ? 'leads/import' : 'cold-calls/import', {
           method: 'POST',
-          body: { rows: newItems },
-        });
+          body: { rows: newItems.map(({ name, phone, status, statusId, project, projectId, date }) => ({ name, phone, status, statusId, project, projectId, date })) },
+        }).then((r) => ({ count: r.count ?? 0, duplicates: r.duplicates ?? 0, invalid: r.invalid ?? 0 }));
       }
-
-      if (importTarget === 'leads') {
-        setLeads(prev => [...prev, ...newItems]);
-      } else {
-        setColdCalls(prev => [...prev, ...newItems]);
-      }
+      await reload(importTarget === 'leads' ? ['leads', 'projects'] : ['coldCalls', 'projects']);
 
       setStats({
         totalRows,
-        duplicatesRemoved,
-        imported: newItems.length,
-        skipped,
+        duplicatesRemoved: duplicatesRemoved + result.duplicates,
+        imported: result.count,
+        skipped: skipped + result.invalid,
       });
 
-      toast.success(`Imported ${newItems.length} records.`);
+      if (result.count > 0) toast.success(`Imported ${result.count} record(s).`);
+      else toast.warning('Nothing was imported: every row was a duplicate or had an invalid phone number.');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(errorMessage(error));
+      void reload(['projects']);
     }
   };
 
@@ -368,7 +368,7 @@ export default function UploadData() {
       }
       await importRows(parsedRows, totalRows);
     } catch (error) {
-      toast.error('Upload failed. Please check the file and try again.');
+      toast.error(`Upload failed: ${errorMessage(error)}. Please check the file and try again.`);
     } finally {
       setIsUploading(false);
     }

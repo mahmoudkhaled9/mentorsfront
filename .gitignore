@@ -27,3 +27,6 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Test output (screenshots, traces, coverage map, e2e build)
+test-results/

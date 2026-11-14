@@ -1,37 +1,99 @@
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { useData } from '@/contexts/DataContext';
+import { useAuth } from '@/hooks/useAuth';
+import { ApiError, errorMessage } from '@/lib/api';
+import { jsonRequest } from '@/lib/mutations';
+import { savedItem } from '@/lib/saved';
+import { checkPhone, telHref, whatsappHref as toWhatsApp } from '@/lib/phone';
+import type { AgentCare as AgentCareContact } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { 
-  HeadphonesIcon, 
-  Phone, 
-  MessageCircle, 
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  HeadphonesIcon,
+  Phone,
+  MessageCircle,
   Mail,
   User,
-  Info
+  Info,
+  Pencil,
 } from 'lucide-react';
 
 export default function AgentCare() {
-  const { agentCare } = useData();
-  const sanitizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
-  const normalizeWhatsAppPhone = (phone: string) => {
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) return '';
-    if (digits.startsWith('20')) return digits;
-    if (digits.startsWith('0')) return `20${digits.slice(1)}`;
-    return digits;
-  };
-  const callHref = `tel:${sanitizePhone(agentCare.phone)}`;
-  const whatsappHref = `https://wa.me/${normalizeWhatsAppPhone(agentCare.whatsapp)}`;
+  const { agentCare: contact, setAgentCare, isLoading, reload } = useData();
+  const { isAdmin } = useAuth();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: '', phone: '', whatsapp: '', email: '' });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  if (!contact) {
+    return (
+      <div className="space-y-2">
+        <h1 className="text-2xl font-bold text-gray-900">Agent Care</h1>
+        <p className="text-gray-500">{isLoading ? 'Loading the support contact...' : 'No support contact has been configured yet.'}</p>
+      </div>
+    );
+  }
+  const agentCare = contact;
+  const callHref = telHref(agentCare.phone);
+  const whatsappHref = toWhatsApp(agentCare.whatsapp);
   const emailHref = `mailto:${agentCare.email}`;
+
+  const openEditor = () => {
+    setForm({ name: agentCare.name, phone: agentCare.phone, whatsapp: agentCare.whatsapp, email: agentCare.email });
+    setErrors({});
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const problems: Record<string, string> = {};
+    if (!form.name.trim()) problems.name = 'Name is required';
+    const phone = checkPhone(form.phone, { keep: agentCare.phone });
+    if (!phone.ok) problems.phone = phone.message;
+    const whatsapp = checkPhone(form.whatsapp, { keep: agentCare.whatsapp });
+    if (!whatsapp.ok) problems.whatsapp = whatsapp.message;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email.trim())) problems.email = 'Enter a valid email address';
+    setErrors(problems);
+    if (Object.keys(problems).length || !phone.ok || !whatsapp.ok) return;
+    setSaving(true);
+    try {
+      const result = await jsonRequest<{ item: AgentCareContact }>(`agent-care/${agentCare.id}`, {
+        method: 'PUT',
+        body: { name: form.name.trim(), phone: phone.value, whatsapp: whatsapp.value, email: form.email.trim() },
+      });
+      const saved = savedItem<AgentCareContact>(result);
+      if (saved) setAgentCare(saved);
+      else await reload(['agentCare']);
+      setEditing(false);
+      toast.success('Support contact updated');
+    } catch (error) {
+      if (error instanceof ApiError && Object.keys(error.fieldErrors).length) setErrors(error.fieldErrors);
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Agent Care</h1>
-        <p className="text-gray-500 mt-1">
-          Contact support for assistance
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Agent Care</h1>
+          <p className="text-gray-500 mt-1">
+            Contact support for assistance
+          </p>
+        </div>
+        {isAdmin && (
+          <Button variant="outline" onClick={openEditor}>
+            <Pencil className="w-4 h-4 mr-2" />
+            Edit Contact
+          </Button>
+        )}
       </div>
 
       {/* Agent Care Card */}
@@ -115,8 +177,8 @@ export default function AgentCare() {
               <Info className="w-5 h-5 text-amber-600 mt-0.5" />
               <div>
                 <p className="text-sm text-amber-800">
-                  <strong>Note:</strong> The admin can update the Agent Care contact information 
-                  from the admin panel. This contact is available for all agents who need support.
+                  <strong>Note:</strong> Administrators can update this contact with the &quot;Edit Contact&quot; button
+                  above. It is shown to every employee who needs support.
                 </p>
               </div>
             </div>
@@ -147,6 +209,38 @@ export default function AgentCare() {
           </div>
         </CardContent>
       </Card>
+      <Dialog open={editing} onOpenChange={(open) => !saving && setEditing(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Support Contact</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {([
+              ['name', 'Name', 'text'],
+              ['phone', 'Phone', 'tel'],
+              ['whatsapp', 'WhatsApp', 'tel'],
+              ['email', 'Email', 'email'],
+            ] as const).map(([key, label, type]) => (
+              <div key={key} className="space-y-1">
+                <Label htmlFor={`care-${key}`}>{label}</Label>
+                <Input
+                  id={`care-${key}`}
+                  type={type}
+                  dir={type === 'tel' ? 'ltr' : undefined}
+                  value={form[key]}
+                  aria-invalid={Boolean(errors[key])}
+                  onChange={(event) => setForm((prev) => ({ ...prev, [key]: event.target.value }))}
+                />
+                {errors[key] && <p className="text-xs text-red-600" role="alert">{errors[key]}</p>}
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={() => void save()} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

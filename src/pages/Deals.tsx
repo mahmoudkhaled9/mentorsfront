@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData } from '@/contexts/DataContext';
 import { useAuth } from '@/hooks/useAuth';
-import { calculateCommission } from '@/lib/commission';
+import { calculateCommission, earnsCommission } from '@/lib/commission';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +63,7 @@ export default function Deals() {
   const [newClientName, setNewClientName] = useState('');
   const [newClientPhone, setNewClientPhone] = useState('');
   const [newAgentId, setNewAgentId] = useState('');
+  const selectedSeller = users.find((u) => u.id.toString() === newAgentId);
   const [newProjectId, setNewProjectId] = useState('');
   const [newReservationPrice, setNewReservationPrice] = useState('');
   const [newReservationDate, setNewReservationDate] = useState('');
@@ -70,7 +71,6 @@ export default function Deals() {
   const [newContractDate, setNewContractDate] = useState('');
   const [newUnitNumber, setNewUnitNumber] = useState('');
   const [newStage, setNewStage] = useState('');
-  const [newCommission, setNewCommission] = useState('');
   const [newStatus, setNewStatus] = useState<'pending' | 'approved' | 'rejected'>('pending');
   const [selectedDeal, setSelectedDeal] = useState<(typeof deals)[0] | null>(null);
   const [newAttachments, setNewAttachments] = useState<DealFileItem[]>([]);
@@ -263,13 +263,8 @@ export default function Deals() {
       return;
     }
 
+    // the server calculates the commission from the contract price (5,000 EGP per million); nothing to send
     const amount = contractPrice;
-    const autoCommission = calculateCommission(amount);
-    const commission = newCommission ? Number(newCommission) : autoCommission;
-    if (Number.isNaN(commission) || commission < 0) {
-      toast.error('Enter a valid commission');
-      return;
-    }
 
     try {
       const created = await jsonRequest<{ ok: boolean; id: number; item: Deal }>('deals', {
@@ -281,7 +276,6 @@ export default function Deals() {
           projectId: project.id,
           developerId: project.developerId,
           amount,
-          commission,
           status: newStatus,
           stage: newStage,
           reservationPrice,
@@ -311,7 +305,6 @@ export default function Deals() {
       setNewContractDate('');
       setNewUnitNumber('');
       setNewStage('');
-      setNewCommission('');
       setNewStatus('pending');
       setNewAttachments([]);
       setNewReservationImages([]);
@@ -442,12 +435,14 @@ export default function Deals() {
                     <p className="text-xs text-gray-500">{newReservationImages.length} file(s) selected</p>
                   ) : null}
                 </div>
-                <Input
-                  placeholder={`Commission (EGP) - default ${newContractPrice ? calculateCommission(Number(newContractPrice)).toLocaleString() : 0}`}
-                  type="number"
-                  value={newCommission}
-                  onChange={(e) => setNewCommission(e.target.value)}
-                />
+                <p className="text-sm text-gray-700" data-testid="deal-commission-preview">
+                  Commission: <strong>{calculateCommission(Number(newContractPrice) || 0, selectedSeller ? selectedSeller.role : 'agent').toLocaleString()} EGP</strong>
+                  <span className="text-gray-500">
+                    {selectedSeller && !earnsCommission(selectedSeller.role)
+                      ? ' (no commission: only agents earn commission)'
+                      : ' (calculated from the contract price)'}
+                  </span>
+                </p>
                 <Select value={newStatus} onValueChange={(value) => setNewStatus(value as 'pending' | 'approved' | 'rejected')}>
                   <SelectTrigger>
                     <SelectValue placeholder="Status" />
@@ -460,7 +455,7 @@ export default function Deals() {
                 </Select>
                 <div className="p-4 bg-blue-50 rounded-lg">
                   <p className="text-sm text-blue-700">
-                    <strong>Commission Calculation:</strong> 5,000 EGP for each 1 Million EGP of deal value
+                    <strong>Commission Calculation:</strong> 5,000 EGP for each 1 Million EGP of deal value, for agents only
                   </p>
                 </div>
                 <Button onClick={handleAddDeal}>
@@ -866,7 +861,7 @@ export default function Deals() {
             <div>
               <h3 className="font-semibold text-gray-900">Commission Calculation</h3>
               <p className="text-sm text-gray-600 mt-1">
-                Commission is calculated at <strong>5,000 EGP</strong> for every <strong>1 Million EGP</strong> of deal value.
+                Commission is calculated at <strong>5,000 EGP</strong> for every <strong>1 Million EGP</strong> of deal value, for deals sold by <strong>agents only</strong> (team leaders, supervisors, managers, directors and franchise owners earn no commission).
               </p>
               <div className="mt-3 p-3 bg-white rounded-lg">
                 <p className="text-sm text-gray-700">

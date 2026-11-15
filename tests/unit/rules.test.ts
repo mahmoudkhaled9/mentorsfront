@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { passwordProblem } from '../../src/lib/passwords.ts';
-import { calculateCommission } from '../../src/lib/commission.ts';
+import { calculateCommission, earnsCommission } from '../../src/lib/commission.ts';
 import { isAssignerRole, isSuperRole, roleLabel } from '../../src/lib/roles.ts';
 import { commentsFor, pageCount } from '../../src/lib/table.ts';
 
@@ -13,12 +13,22 @@ test('password rules mirror the server', () => {
   assert.equal(passwordProblem('Strong-Pass-2026', { email: 'a@b.co', name: 'Ali' }), '');
 });
 
-test('commission default: 5,000 EGP per million', () => {
-  assert.equal(calculateCommission(10_000_000), 50_000);
-  assert.equal(calculateCommission(5_200_000), 26_000);
-  assert.equal(calculateCommission(0), 0);
-  assert.equal(calculateCommission(Number.NaN), 0);
-  assert.equal(calculateCommission(-5), 0);
+test('commission: agents only (same rule as the server)', () => {
+  assert.equal(calculateCommission(5_000_000, 'agent'), 25_000);
+  for (const role of ['team_leader', 'sales_supervisor', 'sales_manager', 'director', 'franchise_owner', 'admin', '', null, undefined]) {
+    assert.equal(calculateCommission(5_000_000, role), 0, String(role));
+    assert.equal(earnsCommission(role), false, String(role));
+  }
+});
+
+test('commission: 5,000 EGP per million (same figures as the server)', () => {
+  assert.equal(calculateCommission(5_000_000, 'agent'), 25_000);
+  assert.equal(calculateCommission(10_000_000, 'agent'), 50_000);
+  assert.equal(calculateCommission(1_234_567, 'agent'), 6172.84);
+  assert.equal(calculateCommission(5_200_000, 'agent'), 26_000);
+  assert.equal(calculateCommission(0, 'agent'), 0);
+  assert.equal(calculateCommission(Number.NaN, 'agent'), 0);
+  assert.equal(calculateCommission(-5, 'agent'), 0);
 });
 
 test('roles match the backend policy', () => {

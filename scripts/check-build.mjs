@@ -4,7 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const dist = path.resolve(process.argv[2] ?? 'dist');
+const args = process.argv.slice(2);
+const production = args.includes('--production'); // release builds: no local API address may be compiled in
+const dist = path.resolve(args.find((a) => !a.startsWith('--')) ?? 'dist');
 const problems = [];
 const ok = (m) => console.log(`  ok      ${m}`);
 const bad = (m) => { problems.push(m); console.log(`  PROBLEM ${m}`); };
@@ -18,6 +20,22 @@ if (/AddType\s+text\/javascript\s+\.mjs/.test(htaccess)) ok('.htaccess serves .m
 else bad('.htaccess lacks "AddType text/javascript .mjs"');
 if (/FallbackResource|RewriteRule\s+\.\s+\/index\.html|RewriteRule\s+\^.*index\.html/.test(htaccess)) ok('.htaccess has an SPA fallback to index.html');
 else bad('.htaccess has no SPA fallback (refreshing /leads/1 would 404)');
+
+if (/X-Frame-Options|frame-ancestors/.test(htaccess)) ok('.htaccess forbids framing (clickjacking)');
+else bad('.htaccess does not forbid framing');
+const csp = (html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) ?? [])[1];
+if (csp && /script-src 'self'(;|$)/.test(csp) && !/unsafe-eval/.test(csp)) ok(`index.html has a Content-Security-Policy (${csp.match(/connect-src [^;]+/)?.[0]})`);
+else bad('index.html has no strict Content-Security-Policy');
+
+if (production) {
+  const local = /(localhost|127\.0\.0\.1|\[::1\])/;
+  const js = fs.readdirSync(path.join(dist, 'assets')).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(dist, 'assets', f), 'utf8')).join('\n');
+  const apiMatch = js.match(/https?:\/\/[^"'`\s]+\/api\b/);
+  if (csp && local.test(csp)) bad('production build: the Content-Security-Policy allows a local address');
+  else if (apiMatch && local.test(apiMatch[0])) bad(`production build calls a local API: ${apiMatch[0]}`);
+  else if (csp && !/connect-src 'self' https:\/\//.test(csp) && !/connect-src 'self'(;|$)/.test(csp)) bad('production build: the API is not HTTPS');
+  else ok('production build: HTTPS API, no local addresses');
+}
 
 const refs = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1]);
 const relative = refs.filter((r) => !r.startsWith('/') && !/^https?:/.test(r));

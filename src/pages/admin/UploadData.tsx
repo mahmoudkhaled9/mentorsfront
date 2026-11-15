@@ -187,7 +187,8 @@ export default function UploadData() {
   };
 
   const extractTextFromPdf = async (buffer: ArrayBuffer) => {
-    const pdf = await getDocument({ data: buffer }).promise;
+    // isEvalSupported:false - pdf.js must not use eval (the production Content-Security-Policy forbids it)
+    const pdf = await getDocument({ data: buffer, isEvalSupported: false }).promise;
     let text = '';
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
       const page = await pdf.getPage(pageNum);

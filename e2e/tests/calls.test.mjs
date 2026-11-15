@@ -13,7 +13,10 @@ before(async () => {
 after(closeBrowser);
 
 test('Call Action: outcome + notes; requirements shown read-only from the lead (no duplicate fields); save; Call History; details', async (t) => {
-  const own = (await api('GET', 'leads', null, agent)).body[0];
+  // a fresh lead of the agent's own: the demo data already has calls on some leads, and this test counts calls
+  const createdLead = await api('POST', 'leads', { name: unique('Call Lead'), phone: phone(), statusId: statuses[0].id }, agent);
+  assert.equal(createdLead.status, 200, JSON.stringify(createdLead.body));
+  const own = createdLead.body.item;
   // set the lead's requirements the only way that exists: Edit Lead (PUT /leads/:id)
   await api('PUT', `leads/${own.id}`, { requirements: { ...own.requirements, delivery: 'within_3_years', finishing: 'core_and_shell', purpose: 'investment' } }, agent);
   const outcome = statuses[2];
@@ -21,7 +24,8 @@ test('Call Action: outcome + notes; requirements shown read-only from the lead (
     await login(page, 'agent');
     await page.goto(`${APP}/leads`);
     await page.getByRole('link', { name: own.name, exact: true }).click();
-    await page.getByRole('button', { name: 'Log call' }).click();
+    await page.waitForURL(`**/leads/${own.id}`);
+    await page.getByRole('button', { name: 'Log call', exact: true }).click();
     const dialog = page.getByTestId('call-action');
     await dialog.waitFor();
 
@@ -37,7 +41,7 @@ test('Call Action: outcome + notes; requirements shown read-only from the lead (
     await dialog.waitFor({ state: 'detached' });
     assert.equal((await api('GET', `call-actions?leadId=${own.id}`, null, agent)).body.length, 0);
 
-    await page.getByRole('button', { name: 'Log call' }).click();
+    await page.getByRole('button', { name: 'Log call', exact: true }).click();
     // required outcome; its options are the CRM statuses
     await dialog.getByRole('button', { name: 'Save call' }).click();
     await dialog.getByText('Choose the call outcome').waitFor();

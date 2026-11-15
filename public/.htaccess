@@ -1,3 +1,9 @@
+# PDF import loads pdf.js's worker (assets/pdf.worker.min-*.mjs) as a JavaScript module. Browsers refuse a module
+# served as application/octet-stream, which some Apache setups use for .mjs: declare the type explicitly.
+<IfModule mod_mime.c>
+  AddType text/javascript .mjs
+</IfModule>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /

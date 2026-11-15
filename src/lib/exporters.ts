@@ -1,5 +1,3 @@
-import * as XLSX from 'xlsx';
-
 /** One exported row: column title -> value. The same rows feed Copy, Excel and PDF so they always agree. */
 export type ExportRow = Record<string, string | number | null | undefined>;
 
@@ -28,8 +26,10 @@ export async function copyRows(rows: ExportRow[]): Promise<number> {
   return rows.length;
 }
 
-export function exportExcel(rows: ExportRow[], baseName: string, sheetName = 'Data'): number {
+/** Excel export. SheetJS (~420 kB) is loaded only when somebody exports, not with every page load. */
+export async function exportExcel(rows: ExportRow[], baseName: string, sheetName = 'Data'): Promise<number> {
   if (!rows.length) throw new Error('There is nothing to export');
+  const XLSX = await import('xlsx');
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));

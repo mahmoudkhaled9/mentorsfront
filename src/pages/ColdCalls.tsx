@@ -153,13 +153,17 @@ export default function ColdCalls() {
 
   const exportRows = () => toExportRows(selected.length ? coldCalls.filter((c) => selected.includes(c.id)) : filtered);
 
-  const exportAll = () => {
+  const exportAll = async () => {
     if (!coldCalls.length) {
       toast.error('There are no cold calls to export');
       return;
     }
-    const n = exportExcel(toExportRows(coldCalls), 'cold-calls-all', 'Cold Calls');
-    toast.success(`Exported all ${n} cold calls to Excel`);
+    try {
+      const n = await exportExcel(toExportRows(coldCalls), 'cold-calls-all', 'Cold Calls');
+      toast.success(`Exported all ${n} cold calls to Excel`);
+    } catch (error) {
+      toast.error(`Export failed: ${errorMessage(error)}`);
+    }
   };
 
   const openAdd = () => {
@@ -272,7 +276,7 @@ export default function ColdCalls() {
             <Plus className="mr-2 h-4 w-4" />
             Add New Cold Call
           </Button>
-          <Button className="bg-green-600 hover:bg-green-700" onClick={exportAll}>
+          <Button className="bg-green-600 hover:bg-green-700" onClick={() => void exportAll()}>
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Export All to Excel
           </Button>

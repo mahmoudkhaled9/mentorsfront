@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { DataProvider } from '@/contexts/DataContext';
@@ -29,7 +30,8 @@ import AdminProjects from '@/pages/admin/Projects';
 import AdminDestinations from '@/pages/admin/Destinations';
 import AdminPropertyTypes from '@/pages/admin/PropertyTypes';
 import AdminAssign from '@/pages/admin/Assign';
-import AdminUploadData from '@/pages/admin/UploadData';
+// Upload Data parses PDF / Excel files (pdf.js + SheetJS, ~1 MB): loaded only when an administrator opens that page.
+const AdminUploadData = lazy(() => import('@/pages/admin/UploadData'));
 
 // Layout
 import MainLayout from '@/components/layout/MainLayout';
@@ -81,7 +83,7 @@ function AppRoutes() {
         <Route path="admin/destinations" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminDestinations /></PrivateRoute>} />
         <Route path="admin/property-types" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminPropertyTypes /></PrivateRoute>} />
         <Route path="admin/assign" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader']}><AdminAssign /></PrivateRoute>} />
-        <Route path="admin/upload-data" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminUploadData /></PrivateRoute>} />
+        <Route path="admin/upload-data" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><Suspense fallback={<p className="p-6 text-sm text-gray-500" role="status">Loading the upload page...</p>}><AdminUploadData /></Suspense></PrivateRoute>} />
       </Route>
       
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

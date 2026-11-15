@@ -22,7 +22,7 @@ interface Props {
 
 const FIELDS = [
   ['name', 'Developer Name *', 'text', 'Ora Developers'],
-  ['logo', 'Logo', 'text', '/developers/ora.jpg or https://...'],
+  ['logo', 'Logo', 'text', '/developers/hyde-park.jpg or https://...'],
   ['phone', 'Phone', 'tel', '01012345678'],
   ['whatsapp', 'WhatsApp', 'tel', '01012345678'],
   ['email', 'Email', 'email', 'info@example.com'],
@@ -52,7 +52,7 @@ export function DeveloperFormDialog({ open, onOpenChange, developer, onSaved }: 
     const problems: Record<string, string> = {};
     if (!form.name.trim()) problems.name = 'Name is required';
     const logo = form.logo.trim();
-    if (logo && !/^(https?:\/\/|\/)[^\s"'<>]+$/i.test(logo)) problems.logo = 'Use a site path like /developers/ora.jpg or an http(s) link';
+    if (logo && !/^(https?:\/\/|\/)[^\s"'<>]+$/i.test(logo)) problems.logo = 'Use a site path like /developers/hyde-park.jpg or an http(s) link';
     const phone = checkPhone(form.phone, { required: false, keep: developer?.phone });
     if (!phone.ok) problems.phone = phone.message;
     const whatsapp = checkPhone(form.whatsapp, { required: false, keep: developer?.whatsapp });

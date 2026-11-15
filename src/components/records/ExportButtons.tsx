@@ -15,7 +15,7 @@ interface Props {
 
 /** Copy / Excel / PDF of the rows the user is looking at. Each button really produces the output (no placeholders). */
 export function ExportButtons({ rows, scopeLabel, title, baseName }: Props) {
-  const [busy, setBusy] = useState<'' | 'copy' | 'pdf'>('');
+  const [busy, setBusy] = useState<'' | 'copy' | 'excel' | 'pdf'>('');
   const run = async (kind: 'copy' | 'excel' | 'pdf') => {
     const data = rows();
     if (!data.length) {
@@ -28,7 +28,8 @@ export function ExportButtons({ rows, scopeLabel, title, baseName }: Props) {
         const n = await copyRows(data);
         toast.success(`Copied ${n} ${scopeLabel} to the clipboard`);
       } else if (kind === 'excel') {
-        const n = exportExcel(data, baseName, title.slice(0, 31));
+        setBusy('excel');
+        const n = await exportExcel(data, baseName, title.slice(0, 31));
         toast.success(`Exported ${n} ${scopeLabel} to Excel`);
       } else {
         setBusy('pdf');
@@ -47,7 +48,7 @@ export function ExportButtons({ rows, scopeLabel, title, baseName }: Props) {
         <Copy className="mr-2 h-4 w-4" />
         Copy
       </Button>
-      <Button variant="outline" size="sm" onClick={() => void run('excel')} title={`Download ${scopeLabel} as Excel`}>
+      <Button variant="outline" size="sm" onClick={() => void run('excel')} disabled={busy === 'excel'} title={`Download ${scopeLabel} as Excel`}>
         <FileSpreadsheet className="mr-2 h-4 w-4" />
         Excel
       </Button>

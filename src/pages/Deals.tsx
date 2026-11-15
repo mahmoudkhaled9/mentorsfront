@@ -52,6 +52,7 @@ import { savedItem } from '@/lib/saved';
 import { checkPhone, telHref, whatsappHref } from '@/lib/phone';
 import { errorMessage } from '@/lib/api';
 import { ConfirmDialog } from '@/components/records/ConfirmDialog';
+import { safeHref } from '@/lib/safeUrl';
 
 export default function Deals() {
   const { deals, setDeals, users, projects, reload } = useData();
@@ -789,7 +790,7 @@ export default function Deals() {
                       (selectedDeal.attachments ?? []).map((file) => (
                         <a
                           key={`${file.name}-${file.uploadedAt ?? ''}`}
-                          href={file.url}
+                          href={safeHref(file.url)}
                           target="_blank"
                           rel="noreferrer"
                           className="block rounded-lg border p-3 text-sm text-gray-700 hover:bg-gray-50"
@@ -828,7 +829,7 @@ export default function Deals() {
                       (selectedDeal.reservationImages ?? []).map((file) => (
                         <a
                           key={`${file.name}-${file.uploadedAt ?? ''}`}
-                          href={file.url}
+                          href={safeHref(file.url)}
                           target="_blank"
                           rel="noreferrer"
                           className="block overflow-hidden rounded-lg border bg-gray-50"

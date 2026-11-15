@@ -101,7 +101,9 @@ async function auditRoute(page, role, route) {
     page.off('filechooser', onChooser);
     if (!record.outcome) {
       const after = await snapshot(page);
-      const newToasts = after.toasts.filter((x) => !before.toasts.includes(x));
+      // a toast counts as new even if an identical one is still on screen (e.g. the same "Nothing to export" twice)
+      const remaining = [...before.toasts];
+      const newToasts = after.toasts.filter((x) => { const i = remaining.indexOf(x); if (i < 0) return true; remaining.splice(i, 1); return false; });
       const effects = [];
       if (after.url !== before.url) effects.push(`navigates to ${after.url}`);
       if (after.overlays > before.overlays) effects.push('opens a dialog / list');

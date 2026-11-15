@@ -30,9 +30,21 @@ jobs:
         working-directory: mentorsfront
       - run: npm install --no-save --no-audit --no-fund playwright@1 && npx playwright install --with-deps chromium
         working-directory: mentorsfront
-      # typecheck, lint, unit tests, production build + build-output check (scripts/check-build.mjs), browser tests,
-      # interaction audit (every visible control must do something)
-      - run: npm run test:all
+      # the same checks as `npm run test:all`, one step each so a failure is visible in the run summary
+      - name: typecheck
+        run: npm run typecheck
+        working-directory: mentorsfront
+      - name: lint
+        run: npm run lint
+        working-directory: mentorsfront
+      - name: unit tests
+        run: npm run test:unit
+        working-directory: mentorsfront
+      - name: production build + build-output check
+        run: npm run build:check
+        working-directory: mentorsfront
+      - name: browser tests + interaction audit (every visible control must do something)
+        run: npm run test:e2e:all
         working-directory: mentorsfront
       # security gate: no unaccepted high/critical advisory in the production dependencies (scripts/audit-check.mjs)
       - run: npm run audit:check

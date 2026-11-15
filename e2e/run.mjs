@@ -17,6 +17,22 @@ const filters = args.filter((a) => !a.startsWith('--'));
 fs.rmSync(path.join(RESULTS, 'e2e'), { recursive: true, force: true });
 fs.mkdirSync(path.join(RESULTS, 'e2e'), { recursive: true });
 
+// On GitHub Actions, a startup failure is also printed as an ::error:: annotation (visible in the run summary without
+// opening the log), with the end of the test backend's log.
+process.on('uncaughtException', reportAndExit);
+process.on('unhandledRejection', reportAndExit);
+function reportAndExit(err) {
+  const message = err?.stack ?? String(err);
+  console.error(message);
+  if (process.env.GITHUB_ACTIONS) {
+    const esc = (t) => String(t).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    let backendLog = '';
+    try { backendLog = fs.readFileSync(path.join(RESULTS, 'backend.log'), 'utf8').split('\n').slice(-25).join('\n'); } catch { /* no backend log yet */ }
+    console.log(`::error title=e2e startup::${esc(message.slice(0, 1500))}${backendLog ? esc(`\n--- backend.log (end) ---\n${backendLog}`) : ''}`);
+  }
+  process.exit(1);
+}
+
 const apiPort = process.env.E2E_DIST ? Number(process.env.E2E_API_PORT ?? 4011) : await freePort(Number(process.env.E2E_API_PORT ?? 4011));
 const webPort = await freePort(Number(process.env.E2E_WEB_PORT ?? 4173), [apiPort]);
 let dist = process.env.E2E_DIST;

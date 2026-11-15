@@ -1,4 +1,6 @@
-const DEFAULT_API_BASE = 'http://localhost:4001/api';
+// Development talks to the local backend; a production build never contains a local address: without VITE_API_BASE it
+// uses the same site's /api (an API served behind the same domain). Releases set VITE_API_BASE (scripts/release.mjs).
+const DEFAULT_API_BASE = import.meta.env.DEV ? 'http://localhost:4001/api' : '/api';
 
 export const AUTH_TOKEN_KEY = 'mentors_auth_token';
 export const AUTH_USER_KEY = 'mentors_auth_user';

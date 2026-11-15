@@ -31,3 +31,6 @@ dist-ssr
 
 # Test output (screenshots, traces, coverage map, e2e build)
 test-results/
+
+# Release packages (built artifacts)
+release/

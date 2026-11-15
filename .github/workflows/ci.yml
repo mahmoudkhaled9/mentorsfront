@@ -18,7 +18,8 @@ jobs:
       # repository is private, a secret BACKEND_REPO_TOKEN with read access.
       - uses: actions/checkout@v4
         with:
-          repository: ${{ vars.BACKEND_REPO }}
+          # without the BACKEND_REPO variable, checkout silently fetched THIS (frontend) repository a second time
+          repository: ${{ vars.BACKEND_REPO || 'mahmoudkhaled9/yourmentorsapp' }}
           token: ${{ secrets.BACKEND_REPO_TOKEN || github.token }}
           path: yourmentorsapp
       - uses: actions/setup-node@v4

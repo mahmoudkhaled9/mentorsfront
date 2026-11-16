@@ -6,6 +6,8 @@ export type UserRole =
   | 'sales_manager'
   | 'sales_supervisor'
   | 'director'
+  | 'head_of_sales'
+  | 'ceo'
   | 'franchise_owner';
 
 export interface User {

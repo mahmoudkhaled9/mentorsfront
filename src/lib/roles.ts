@@ -2,7 +2,7 @@ import type { UserRole } from '@/types';
 
 /** Same role sets as the backend (src/auth/policy.js). The server enforces them; the UI only hides what would be refused. */
 export const SUPER_ROLES: UserRole[] = ['admin', 'franchise_owner'];
-export const ASSIGNER_ROLES: UserRole[] = [...SUPER_ROLES, 'director', 'sales_manager', 'sales_supervisor', 'team_leader'];
+export const ASSIGNER_ROLES: UserRole[] = [...SUPER_ROLES, 'ceo', 'head_of_sales', 'director', 'sales_manager', 'sales_supervisor', 'team_leader'];
 
 export const isSuperRole = (role?: string | null) => SUPER_ROLES.includes(role as UserRole);
 export const isAssignerRole = (role?: string | null) => ASSIGNER_ROLES.includes(role as UserRole);
@@ -10,6 +10,8 @@ export const isAssignerRole = (role?: string | null) => ASSIGNER_ROLES.includes(
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrator',
   franchise_owner: 'Franchise Owner',
+  ceo: 'CEO',
+  head_of_sales: 'Head of Sales',
   director: 'Director',
   sales_manager: 'Sales Manager',
   sales_supervisor: 'Sales Supervisor',

@@ -18,7 +18,7 @@ const password = process.env.LIVE_PASSWORD
   ?? (process.env.LIVE_PASSWORD_FILE && fs.readFileSync(process.env.LIVE_PASSWORD_FILE, 'utf8').match(/^password=(.+)$/m)?.[1]?.trim());
 if (!password) { console.error('set LIVE_PASSWORD or LIVE_PASSWORD_FILE'); process.exit(2); }
 
-const PAGES = ['/dashboard', '/developers', '/deals', '/leads', '/cold-calls', '/call-history', '/reports', '/agent-care', '/profile'];
+const PAGES = ['/dashboard', '/developers', '/deals', '/leads', '/cold-calls', '/call-history', '/number-pool', '/reports', '/agent-care', '/profile'];
 const SUPER_PAGES = ['/admin/users', '/admin/departments', '/admin/jobtitles', '/admin/brokers', '/admin/titles', '/admin/statuses', '/admin/sources', '/admin/projects', '/admin/destinations', '/admin/property-types', '/admin/upload-data'];
 const ROLES = [
   { email: 'owner@demo.test', role: 'franchise_owner', super: true, assign: true },

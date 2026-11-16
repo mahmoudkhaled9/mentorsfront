@@ -21,7 +21,7 @@ import { errorMessage } from '@/lib/api';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
-type ImportTarget = 'leads' | 'coldCalls';
+type ImportTarget = 'leads' | 'coldCalls' | 'numberPool';
 
 type ImportStats = {
   totalRows: number;
@@ -36,6 +36,8 @@ type UploadRow = {
   status?: string;
   project?: string;
   assignedTo?: string;
+  /** Number Pool only: every column of the row under its original header (requirements are read by the server). */
+  fields?: Record<string, string>;
 };
 
 const MAX_ROWS = 10000;
@@ -148,6 +150,7 @@ export default function UploadData() {
       return { rows: [], totalRows: 0, error: 'No data rows found' };
     }
 
+    const rawHeaders = rows[0].map((h, i) => String(h ?? '').trim() || `Column ${i + 1}`);
     const headers = rows[0].map(normalizeHeader);
     const phoneIndex = headers.findIndex((header) =>
       phoneAliases.some((alias) => header.includes(alias) || alias.includes(header))
@@ -175,8 +178,14 @@ export default function UploadData() {
         continue;
       }
 
+      const fields: Record<string, string> = {};
+      rawHeaders.forEach((h, k) => {
+        const value = String(row[k] ?? '').trim();
+        if (value) fields[h] = value;
+      });
       result.push({
         phone,
+        fields,
         name: nameIndex >= 0 ? pickNameValue(row[nameIndex]) : undefined,
         status: statusIndex >= 0 ? String(row[statusIndex] ?? '').trim() : undefined,
         project: projectIndex >= 0 ? String(row[projectIndex] ?? '').trim() : undefined,
@@ -205,6 +214,10 @@ export default function UploadData() {
       return;
     }
 
+    if (importTarget === 'numberPool') {
+      await importToPool(rawRows, totalRows);
+      return;
+    }
     const existingPhones = new Set(
       (importTarget === 'leads' ? leads : coldCalls)
         .map(item => normalizePhone(item.phone))
@@ -321,6 +334,33 @@ export default function UploadData() {
     }
   };
 
+  /** Number Pool: the server checks phones, removes duplicates (pool, Leads, Cold Calls) and keeps every column. */
+  const importToPool = async (rawRows: UploadRow[], totalRows: number) => {
+    const seen = new Set<string>();
+    let skipped = 0;
+    let duplicatesRemoved = 0;
+    const rows = rawRows.filter((row) => {
+      const phone = normalizePhone(row.phone || '');
+      if (!phone) { skipped += 1; return false; }
+      if (seen.has(phone)) { duplicatesRemoved += 1; return false; }
+      seen.add(phone);
+      return true;
+    });
+    try {
+      const result = rows.length
+        ? await jsonRequest<{ count: number; duplicates?: number; invalid?: number }>('pool/import', {
+          method: 'POST',
+          body: { fileName: file?.name, rows: rows.map(({ name, phone, fields }) => ({ name, phone, fields })) },
+        })
+        : { count: 0, duplicates: 0, invalid: 0 };
+      setStats({ totalRows, duplicatesRemoved: duplicatesRemoved + (result.duplicates ?? 0), imported: result.count, skipped: skipped + (result.invalid ?? 0) });
+      if (result.count > 0) toast.success(`Added ${result.count} number(s) to the Number Pool.`);
+      else toast.warning('Nothing was added: every row was a duplicate or had an invalid phone number.');
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
   const handleUpload = async () => {
     if (!file) {
       toast.error('Please select a file to upload');
@@ -379,7 +419,7 @@ export default function UploadData() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Upload Data</h1>
-        <p className="text-gray-500 mt-1">Import leads or cold calls from Excel, CSV, or PDF</p>
+        <p className="text-gray-500 mt-1">Import leads, cold calls or Number Pool numbers from Excel, CSV, or PDF</p>
       </div>
 
       <Card>
@@ -397,6 +437,7 @@ export default function UploadData() {
             <SelectContent>
               <SelectItem value="leads">Leads</SelectItem>
               <SelectItem value="coldCalls">Cold Calls</SelectItem>
+              <SelectItem value="numberPool">Number Pool</SelectItem>
             </SelectContent>
           </Select>
 
@@ -460,6 +501,7 @@ export default function UploadData() {
             <p>Max 10000 rows per upload.</p>
             <p>Duplicate phone numbers are removed automatically.</p>
             <p>PDF imports extract phone numbers only.</p>
+            <p>Number Pool keeps every column of the sheet. Destination, Budget, Property Type, Delivery, Finishing, Purpose of Purchase, Down Payment and Installments are recognised automatically and shown to the agent who receives the number.</p>
             <p>Supports common formats like Name, Client Name, Mobile, Phone, WhatsApp, Contact No.</p>
           </CardContent>
         </Card>

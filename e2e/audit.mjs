@@ -11,11 +11,11 @@ import { APP, API, browser, closeBrowser, login } from './support/browser.mjs';
 
 const OUT = path.join(RESULTS, 'audit');
 const ROLES = {
-  admin: ['/dashboard', '/developers', '/developers/1', '/deals', '/leads', '/leads/1', '/cold-calls', '/call-history', '/reports', '/agent-care', '/profile',
+  admin: ['/dashboard', '/developers', '/developers/1', '/deals', '/leads', '/leads/1', '/cold-calls', '/call-history', '/number-pool', '/reports', '/agent-care', '/profile',
     '/admin/users', '/admin/departments', '/admin/jobtitles', '/admin/brokers', '/admin/titles', '/admin/statuses', '/admin/sources',
     '/admin/projects', '/admin/destinations', '/admin/property-types', '/admin/assign', '/admin/upload-data'],
-  team_leader: ['/dashboard', '/leads', '/cold-calls', '/call-history', '/deals', '/admin/assign'],
-  agent: ['/dashboard', '/developers', '/developers/1', '/deals', '/leads', '/cold-calls', '/call-history', '/reports', '/agent-care', '/profile'],
+  team_leader: ['/dashboard', '/leads', '/cold-calls', '/call-history', '/number-pool', '/deals', '/admin/assign'],
+  agent: ['/dashboard', '/developers', '/developers/1', '/deals', '/leads', '/cold-calls', '/call-history', '/number-pool', '/reports', '/agent-care', '/profile'],
 };
 const LOGIN = { admin: 'admin', team_leader: 'leader', agent: 'agent' };
 const SELECTOR = 'main button, main a[href], main [role=combobox], main [role=checkbox], main [role=tab], main [role=switch], main input[type=file]';

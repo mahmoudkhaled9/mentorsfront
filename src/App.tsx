@@ -17,6 +17,8 @@ import ColdCalls from '@/pages/ColdCalls';
 import Reports from '@/pages/Reports';
 import AgentCare from '@/pages/AgentCare';
 import Profile from '@/pages/Profile';
+import NumberPool from '@/pages/NumberPool';
+import { ASSIGNER_ROLES } from '@/lib/roles';
 
 // Admin Pages
 import AdminUsers from '@/pages/admin/Users';
@@ -66,6 +68,7 @@ function AppRoutes() {
         <Route path="leads" element={<Leads />} />
         <Route path="leads/:id" element={<LeadDetails />} />
         <Route path="call-history" element={<CallHistory />} />
+        <Route path="number-pool" element={<NumberPool />} />
         <Route path="cold-calls" element={<ColdCalls />} />
         <Route path="reports" element={<Reports />} />
         <Route path="agent-care" element={<AgentCare />} />
@@ -82,7 +85,7 @@ function AppRoutes() {
         <Route path="admin/projects" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminProjects /></PrivateRoute>} />
         <Route path="admin/destinations" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminDestinations /></PrivateRoute>} />
         <Route path="admin/property-types" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><AdminPropertyTypes /></PrivateRoute>} />
-        <Route path="admin/assign" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader']}><AdminAssign /></PrivateRoute>} />
+        <Route path="admin/assign" element={<PrivateRoute allowedRoles={ASSIGNER_ROLES}><AdminAssign /></PrivateRoute>} />
         <Route path="admin/upload-data" element={<PrivateRoute allowedRoles={['admin', 'franchise_owner']}><Suspense fallback={<p className="p-6 text-sm text-gray-500" role="status">Loading the upload page...</p>}><AdminUploadData /></Suspense></PrivateRoute>} />
       </Route>
       

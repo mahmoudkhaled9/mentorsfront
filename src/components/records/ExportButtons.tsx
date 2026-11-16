@@ -7,7 +7,7 @@ import { errorMessage } from '@/lib/api';
 
 interface Props {
   /** Rows to export: the selection when something is selected, otherwise every row matching the current filters. */
-  rows: () => ExportRow[];
+  rows: () => ExportRow[] | Promise<ExportRow[]>;
   scopeLabel: string;
   title: string;
   baseName: string;
@@ -17,7 +17,13 @@ interface Props {
 export function ExportButtons({ rows, scopeLabel, title, baseName }: Props) {
   const [busy, setBusy] = useState<'' | 'copy' | 'excel' | 'pdf'>('');
   const run = async (kind: 'copy' | 'excel' | 'pdf') => {
-    const data = rows();
+    let data: ExportRow[];
+    try {
+      data = await rows();
+    } catch (error) {
+      toast.error(`Export failed: ${errorMessage(error)}`);
+      return;
+    }
     if (!data.length) {
       toast.error('Nothing to export - no rows match the current filters');
       return;

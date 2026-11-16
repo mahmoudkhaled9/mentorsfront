@@ -48,9 +48,9 @@ const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
 };
 
 /** Who can be someone's manager: anybody in a more senior role. The server also blocks reporting loops. */
-const RANK: Record<string, number> = { franchise_owner: 100, admin: 90, director: 80, sales_manager: 70, sales_supervisor: 60, team_leader: 50, agent: 10 };
+const RANK: Record<string, number> = { franchise_owner: 100, ceo: 95, admin: 90, head_of_sales: 85, director: 80, sales_manager: 70, sales_supervisor: 60, team_leader: 50, agent: 10 };
 const ROLE_COLORS: Record<string, string> = {
-  admin: 'bg-purple-500', franchise_owner: 'bg-indigo-600', director: 'bg-rose-500', sales_manager: 'bg-amber-500',
+  admin: 'bg-purple-500', franchise_owner: 'bg-indigo-600', ceo: 'bg-slate-700', head_of_sales: 'bg-fuchsia-600', director: 'bg-rose-500', sales_manager: 'bg-amber-500',
   sales_supervisor: 'bg-teal-500', team_leader: 'bg-blue-500', agent: 'bg-green-500',
 };
 const PAGE_SIZES = [10, 25, 50, 100];

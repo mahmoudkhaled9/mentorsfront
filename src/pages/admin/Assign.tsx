@@ -90,9 +90,9 @@ export default function AdminAssign() {
   // their own team (the users list is already limited to the caller's team by the server, which also enforces it).
   const directorsAndSalesManagers = users.filter((u) =>
     u.isActive !== false &&
-    (isAdmin ? u.role === 'director' || u.role === 'sales_manager' : u.id !== currentUser?.id)
+    (isAdmin ? ['ceo', 'head_of_sales', 'director', 'sales_manager'].includes(u.role) : u.id !== currentUser?.id)
   );
-  const targetLabel = isAdmin ? 'Director / Sales Manager' : 'Team Member';
+  const targetLabel = isAdmin ? 'CEO / Head of Sales / Director / Sales Manager' : 'Team Member';
 
   // Get items based on active tab
   const items = activeTab === 'leads' ? leads : coldCalls;

@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   RefreshCw,
   PhoneOutgoing,
+  Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ASSIGNER_ROLES, SUPER_ROLES, roleLabel } from '@/lib/roles';
@@ -52,6 +53,7 @@ const navItems: NavItem[] = [
   { label: 'Leads', path: '/leads', icon: Users },
   { label: 'Cold Calls', path: '/cold-calls', icon: PhoneCall },
   { label: 'Call History', path: '/call-history', icon: PhoneOutgoing },
+  { label: 'Number Pool', path: '/number-pool', icon: Layers },
   { label: 'Reports', path: '/reports', icon: FileText },
   { label: 'Agent Care', path: '/agent-care', icon: HeadphonesIcon },
   { label: 'Profile', path: '/profile', icon: UserCircle },

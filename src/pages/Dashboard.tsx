@@ -84,7 +84,7 @@ export default function Dashboard() {
           Welcome back, {user?.name}!
         </h1>
         <p className="text-gray-500 mt-1">
-          Here's what's happening in your CRM today
+          Here's what's happening in UPGRADE CRM SYSTEM today
         </p>
       </div>
 

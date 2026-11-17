@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lock, Mail, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
-import mentorsBanner from '@/assets/mentors-banner.jpg';
+// the photo carries no name (the old banner had the previous brand written on it)
+import loginPhoto from '@/assets/mentors-background.jpg';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -49,16 +50,19 @@ export default function Login() {
         <CardHeader className="space-y-4 text-center">
           <div className="relative overflow-hidden rounded-xl">
             <img
-              src={mentorsBanner}
-              alt="Mentors"
+              src={loginPhoto}
+              alt=""
               className="h-36 w-full object-cover"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/40 to-black/30" />
+            <p className="absolute inset-0 flex items-center justify-center text-2xl font-extrabold tracking-widest text-white" aria-hidden="true">
+              UPGRADE CRM SYSTEM
+            </p>
           </div>
           <div>
-            <CardTitle className="text-2xl font-bold">Welcome to Mentors</CardTitle>
+            <CardTitle className="text-2xl font-bold">Welcome to UPGRADE CRM SYSTEM</CardTitle>
             <CardDescription>
-              Enter your credentials to access the CRM system
+              Enter your credentials to access the UPGRADE CRM SYSTEM
             </CardDescription>
           </div>
         </CardHeader>

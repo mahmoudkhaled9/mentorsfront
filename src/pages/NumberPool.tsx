@@ -3,7 +3,11 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Eye, Layers, PhoneCall, RefreshCw, Undo2, XCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { errorMessage } from '@/lib/api';
+import { useData } from '@/contexts/DataContext';
+import { fromRequirementsForm, toRequirementsForm, type RequirementsForm } from '@/lib/requirements';
+import type { CrmOption, LeadOptions } from '@/types';
+import { RequirementsFields } from '@/components/leads/RequirementsFields';
+import { ApiError, errorMessage } from '@/lib/api';
 import { jsonRequest } from '@/lib/mutations';
 import { roleLabel } from '@/lib/roles';
 import { pageCount } from '@/lib/table';
@@ -57,6 +61,21 @@ type Summary = {
   imports: { id: number; fileName: string | null; rowCount: number; available: number; createdAt: string | null; uploadedBy: string | null }[];
 };
 type Page<T> = { items: T[]; total: number; page: number; pageSize: number };
+
+/** The window the History / Batches / Report tabs show: exact instants, from the user's own local midnight. */
+type Period = { since: string; until: string };
+const pad = (n: number) => String(n).padStart(2, '0');
+const localDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const startOf = (day: string) => {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
+};
+const periodOf = (from: string, to: string): Period => {
+  const end = startOf(to);
+  end.setDate(end.getDate() + 1);
+  return { since: startOf(from).toISOString(), until: end.toISOString() };
+};
+const withPeriod = (qs: URLSearchParams, period: Period) => { qs.set('since', period.since); qs.set('until', period.until); return qs; };
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '');
 const money = (n: number | null) => (n === null || n === undefined ? '' : n.toLocaleString('en-US'));
@@ -152,46 +171,96 @@ function NumberDialog({ itemId, onClose }: { itemId: number | null; onClose: () 
   );
 }
 
-function ProcessDialog({ item, outcomes, onClose, onDone }: { item: PoolItem | null; outcomes: Me['outcomes']; onClose: () => void; onDone: () => void }) {
+/** Starts the request form from what the upload said (names matched to the admin lists; codes kept when valid). */
+function prefill(r: Requirements, options: LeadOptions): RequirementsForm {
+  const match = (text: string | null, list: CrmOption[]) => {
+    const wanted = (text ?? '').split(/[,;/|،]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    return list.filter((o) => o.isActive && wanted.includes(o.name.trim().toLowerCase())).map((o) => o.id);
+  };
+  const pick = <T extends string>(value: string | null, list: { value: T }[]) => (list.some((o) => o.value === value) ? (value as T) : null);
+  return toRequirementsForm({
+    destinationIds: match(r.destination, options.destinations), propertyTypeIds: match(r.propertyType, options.propertyTypes),
+    budgetMin: r.budgetMin, budgetMax: r.budgetMax, delivery: pick(r.delivery, options.delivery), finishing: pick(r.finishing, options.finishing),
+    purpose: pick(r.purpose, options.purpose), downPayment: r.downPayment, installmentPerQuarter: r.installment,
+  });
+}
+
+/** What the upload said for one field, shown under the form when it could not be filled in automatically. */
+function UploadedHints({ r }: { r: Requirements }) {
+  const rows = [['Destination', r.destination], ['Property type', r.propertyType], ['Delivery', r.deliveryLabel ?? r.delivery],
+    ['Finishing', r.finishingLabel ?? r.finishing], ['Purpose', r.purposeLabel ?? r.purpose]].filter(([, v]) => v);
+  const extra = Object.entries(r.original ?? {});
+  if (!rows.length && !extra.length) return <p className="text-xs text-gray-500">The upload had no request details for this number - write what the client asks for.</p>;
+  return (
+    <details className="rounded-md border bg-gray-50 px-3 py-2 text-xs text-gray-600">
+      <summary className="cursor-pointer">What the upload said</summary>
+      <dl className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+        {[...rows, ...extra].map(([k, v]) => <div key={String(k)}><dt className="inline text-gray-500">{k}: </dt><dd className="inline">{v}</dd></div>)}
+      </dl>
+    </details>
+  );
+}
+
+function ProcessForm({ item, outcomes, onClose, onDone }: { item: PoolItem; outcomes: Me['outcomes']; onClose: () => void; onDone: () => void }) {
+  const { leadOptions } = useData();
   const [outcome, setOutcome] = useState('');
   const [notes, setNotes] = useState('');
+  const [request, setRequest] = useState<RequirementsForm>(() => prefill(item.requirements, leadOptions));
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setOutcome(''); setNotes(''); }, [item]);
   const save = async () => {
-    if (!item || !outcome) { toast.error('Choose the call result'); return; }
+    if (!outcome) { toast.error('Choose the call result'); return; }
+    const parsed = fromRequirementsForm(request);
+    setErrors(parsed.errors);
+    if (Object.keys(parsed.errors).length) { toast.error('Check the highlighted request fields'); return; }
     setSaving(true);
     try {
-      const r = await jsonRequest<{ leadId: number | null; coldCallId: number | null }>(`pool/items/${item.id}/process`, { method: 'POST', body: { outcome, notes: notes || undefined } });
-      toast.success(r.leadId ? 'Saved - a lead was created for you' : r.coldCallId ? 'Saved - a cold call was created for you' : 'Result saved');
+      const r = await jsonRequest<{ leadId: number | null; coldCallId: number | null }>(`pool/items/${item.id}/process`, {
+        method: 'POST', body: { outcome, notes: notes || undefined, requirements: parsed.value },
+      });
+      toast.success(r.leadId ? 'Saved - a lead was created for you with this request' : r.coldCallId ? 'Saved - a cold call was created for you' : 'Result saved');
       onDone();
     } catch (err) {
+      if (err instanceof ApiError && Object.keys(err.fieldErrors).length) setErrors(err.fieldErrors);
       toast.error(errorMessage(err));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <Dialog open={item !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Call result · {item?.name} · {item?.phone}</DialogTitle></DialogHeader>
-        {item && <RequirementsView item={item} />}
-        <div className="space-y-3">
-          <div>
-            <Label htmlFor="pool-outcome">Result</Label>
-            <Select value={outcome} onValueChange={setOutcome}>
-              <SelectTrigger id="pool-outcome"><SelectValue placeholder="Choose the result of the call" /></SelectTrigger>
-              <SelectContent>{outcomes.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label htmlFor="pool-notes">Notes</Label>
-            <Textarea id="pool-notes" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} placeholder="What did the client say?" />
-          </div>
+    <>
+      <DialogHeader><DialogTitle>Call result · {item.name} · {item.phone}</DialogTitle></DialogHeader>
+      <div className="space-y-5">
+        <section className="space-y-3" aria-label="Client request">
+          <h3 className="font-semibold">Client request</h3>
+          <RequirementsFields value={request} onChange={setRequest} errors={errors} idPrefix="pool-req" />
+          <UploadedHints r={item.requirements} />
+        </section>
+        <div>
+          <Label htmlFor="pool-outcome">Result</Label>
+          <Select value={outcome} onValueChange={setOutcome}>
+            <SelectTrigger id="pool-outcome" aria-label="Result"><SelectValue placeholder="Choose the result of the call" /></SelectTrigger>
+            <SelectContent>{outcomes.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+          </Select>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving || !outcome}>{saving ? 'Saving...' : 'Save result'}</Button>
-        </DialogFooter>
+        <div>
+          <Label htmlFor="pool-notes">Notes</Label>
+          <Textarea id="pool-notes" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} placeholder="What did the client say?" />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button onClick={save} disabled={saving || !outcome}>{saving ? 'Saving...' : 'Save result'}</Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+function ProcessDialog({ item, outcomes, onClose, onDone }: { item: PoolItem | null; outcomes: Me['outcomes']; onClose: () => void; onDone: () => void }) {
+  return (
+    <Dialog open={item !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        {item && <ProcessForm key={item.id} item={item} outcomes={outcomes} onClose={onClose} onDone={onDone} />}
       </DialogContent>
     </Dialog>
   );
@@ -242,28 +311,24 @@ function ItemsTable({ items, showAgent, onView, onProcess }: { items: PoolItem[]
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-function HistoryTab({ people, onView }: { people: ReportRow[]; onView: (id: number) => void }) {
+function HistoryTab({ people, period, onView }: { people: ReportRow[]; period: Period; onView: (id: number) => void }) {
   const [data, setData] = useState<Page<PoolItem>>({ items: [], total: 0, page: 1, pageSize: 25 });
   const [agent, setAgent] = useState('all');
   const [state, setState] = useState('all');
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
   const [loadedKey, setLoadedKey] = useState('');
   useEffect(() => { const t = setTimeout(() => { setSearch(typed); setPage(1); }, 300); return () => clearTimeout(t); }, [typed]);
   const filter = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
   const pageSize = 25;
   const query = useCallback((size: number, p: number) => {
-    const qs = new URLSearchParams({ page: String(p), pageSize: String(size) });
+    const qs = withPeriod(new URLSearchParams({ page: String(p), pageSize: String(size) }), period);
     if (agent !== 'all') qs.set('userId', agent);
     if (state !== 'all') qs.set('state', state);
     if (search.trim()) qs.set('q', search.trim());
-    if (from) qs.set('from', from);
-    if (to) qs.set('to', to);
     return `pool/items?${qs}`;
-  }, [agent, state, search, from, to]);
+  }, [agent, state, search, period]);
   const key = query(pageSize, page);
   useEffect(() => {
     let alive = true;
@@ -278,7 +343,7 @@ function HistoryTab({ people, onView }: { people: ReportRow[]; onView: (id: numb
   return (
     <Card>
       <CardContent className="space-y-4 p-4">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <Input placeholder="Search name or phone" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Search numbers" />
           <Select value={agent} onValueChange={filter(setAgent)}>
             <SelectTrigger aria-label="Agent"><SelectValue /></SelectTrigger>
@@ -294,8 +359,6 @@ function HistoryTab({ people, onView }: { people: ReportRow[]; onView: (id: numb
               {Object.entries(STATE_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Input type="date" value={from} onChange={(e) => filter(setFrom)(e.target.value)} aria-label="Allocated from" />
-          <Input type="date" value={to} onChange={(e) => filter(setTo)(e.target.value)} aria-label="Allocated to" />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-gray-500">{loading ? 'Loading...' : `${data.total} number(s)`}</p>
@@ -308,7 +371,7 @@ function HistoryTab({ people, onView }: { people: ReportRow[]; onView: (id: numb
   );
 }
 
-function BatchesTab({ meId, people, onView, onChanged }: { meId: number; people: ReportRow[]; onView: (id: number) => void; onChanged: () => void }) {
+function BatchesTab({ meId, people, period, onView, onChanged }: { meId: number; people: ReportRow[]; period: Period; onView: (id: number) => void; onChanged: () => void }) {
   const [data, setData] = useState<Page<Batch>>({ items: [], total: 0, page: 1, pageSize: 25 });
   const [agent, setAgent] = useState('all');
   const [status, setStatus] = useState('all');
@@ -317,11 +380,11 @@ function BatchesTab({ meId, people, onView, onChanged }: { meId: number; people:
   const [busy, setBusy] = useState(false);
   const pageSize = 25;
   const load = useCallback(async () => {
-    const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    const qs = withPeriod(new URLSearchParams({ page: String(page), pageSize: String(pageSize) }), period);
     if (agent !== 'all') qs.set('userId', agent);
     if (status !== 'all') qs.set('status', status);
     try { setData(await jsonRequest<Page<Batch>>(`pool/batches?${qs}`)); } catch (err) { toast.error(errorMessage(err)); }
-  }, [agent, status, page]);
+  }, [agent, status, page, period]);
   useEffect(() => { void load(); }, [load]);
   const show = async (id: number) => {
     try { setOpen(await jsonRequest<Batch>(`pool/batches/${id}`)); } catch (err) { toast.error(errorMessage(err)); }
@@ -414,7 +477,7 @@ function BatchesTab({ meId, people, onView, onChanged }: { meId: number; people:
   );
 }
 
-function ReportTab({ report, from, to, setFrom, setTo }: { report: Report | null; from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
+function ReportTab({ report }: { report: Report | null }) {
   const rows = report?.rows ?? [];
   const asExport = (): ExportRow[] => rows.map((r) => ({
     Person: r.userName, Role: roleLabel(r.role), Manager: r.managerName ?? '', Batches: r.batches, Allocated: r.allocated, Done: r.processed,
@@ -427,8 +490,6 @@ function ReportTab({ report, from, to, setFrom, setTo }: { report: Report | null
     <Card>
       <CardContent className="space-y-4 p-4">
         <div className="flex flex-wrap items-end gap-3">
-          <div><Label htmlFor="pool-report-from">From</Label><Input id="pool-report-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-          <div><Label htmlFor="pool-report-to">To</Label><Input id="pool-report-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
           <div className="ml-auto"><ExportButtons rows={asExport} scopeLabel="rows" title="Number Pool report" baseName="number-pool-report" /></div>
         </div>
         {t && (
@@ -499,8 +560,25 @@ export default function NumberPool() {
   const { user } = useAuth();
   const [me, setMe] = useState<Me | null>(null);
   const [report, setReport] = useState<Report | null>(null);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // History, Batches and Report show TODAY by default and start again from 0 at the user's local midnight.
+  // Nothing is deleted: picking dates shows any earlier day.
+  const [today, setToday] = useState(localDay);
+  const [picked, setPicked] = useState<{ from: string; to: string } | null>(null); // null = follow "today"
+  const from = picked?.from ?? today;
+  const to = picked?.to ?? today;
+  const period = useMemo(() => periodOf(from, to), [from, to]);
+  useEffect(() => {
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    const timer = setTimeout(() => setToday(localDay()), next.getTime() - now.getTime());
+    return () => clearTimeout(timer);
+  }, [today]);
+  const pick = (which: 'from' | 'to', value: string) => {
+    if (!value) return;
+    const next = { from, to, [which]: value };
+    if (next.from > next.to) { if (which === 'from') next.to = next.from; else next.from = next.to; }
+    setPicked(next.from === today && next.to === today ? null : next);
+  };
   const [error, setError] = useState('');
   const [requesting, setRequesting] = useState(0);
   const [viewing, setViewing] = useState<number | null>(null);
@@ -512,11 +590,8 @@ export default function NumberPool() {
     jsonRequest<Me>('pool/me').then((m) => { setMe(m); setError(''); }).catch((err) => setError(errorMessage(err)));
   }, [version]);
   useEffect(() => {
-    const qs = new URLSearchParams();
-    if (from) qs.set('from', from);
-    if (to) qs.set('to', to);
-    jsonRequest<Report>(`pool/report?${qs}`).then(setReport).catch((err) => toast.error(errorMessage(err)));
-  }, [from, to, version]);
+    jsonRequest<Report>(`pool/report?${withPeriod(new URLSearchParams(), period)}`).then(setReport).catch((err) => toast.error(errorMessage(err)));
+  }, [period, version]);
 
   const request = async (size: number) => {
     setRequesting(size);
@@ -573,6 +648,20 @@ export default function NumberPool() {
         </Card>
       )}
 
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 p-4" data-testid="pool-period">
+          <div className="mr-auto">
+            <p className="font-medium">{picked ? `Showing ${from === to ? from : `${from} to ${to}`}` : 'Showing today'}</p>
+            <p className="text-sm text-gray-500">
+              {picked ? 'History, batches and the report for the dates you picked.' : 'History, batches and the report start again from 0 at midnight. Pick dates to see earlier days.'}
+            </p>
+          </div>
+          <div><Label htmlFor="pool-from">From</Label><Input id="pool-from" type="date" value={from} max={to} onChange={(e) => pick('from', e.target.value)} /></div>
+          <div><Label htmlFor="pool-to">To</Label><Input id="pool-to" type="date" value={to} min={from} onChange={(e) => pick('to', e.target.value)} /></div>
+          <Button variant="outline" disabled={!picked} onClick={() => setPicked(null)}>Today</Button>
+        </CardContent>
+      </Card>
+
       <Tabs defaultValue={me.isAgent || hasTeam ? 'history' : me.canSeeSummary ? 'summary' : 'history'}>
         <TabsList>
           <TabsTrigger value="history">{hasTeam ? 'Numbers & history' : 'My history'}</TabsTrigger>
@@ -580,9 +669,9 @@ export default function NumberPool() {
           <TabsTrigger value="report">{hasTeam ? 'Team report' : 'My report'}</TabsTrigger>
           {me.canSeeSummary && <TabsTrigger value="summary">Company summary</TabsTrigger>}
         </TabsList>
-        <TabsContent value="history"><HistoryTab key={version} people={people} onView={setViewing} /></TabsContent>
-        <TabsContent value="batches"><BatchesTab key={version} meId={user.id} people={people} onView={setViewing} onChanged={refresh} /></TabsContent>
-        <TabsContent value="report"><ReportTab report={report} from={from} to={to} setFrom={setFrom} setTo={setTo} /></TabsContent>
+        <TabsContent value="history"><HistoryTab key={`${version}-${period.since}-${period.until}`} people={people} period={period} onView={setViewing} /></TabsContent>
+        <TabsContent value="batches"><BatchesTab key={`${version}-${period.since}-${period.until}`} meId={user.id} people={people} period={period} onView={setViewing} onChanged={refresh} /></TabsContent>
+        <TabsContent value="report"><ReportTab report={report} /></TabsContent>
         {me.canSeeSummary && <TabsContent value="summary"><SummaryTab key={version} /></TabsContent>}
       </Tabs>
 

@@ -4,6 +4,9 @@ import type { UserRole } from '@/types';
 export const SUPER_ROLES: UserRole[] = ['admin', 'franchise_owner'];
 export const ASSIGNER_ROLES: UserRole[] = [...SUPER_ROLES, 'ceo', 'head_of_sales', 'director', 'sales_manager', 'sales_supervisor', 'team_leader'];
 
+/** Developers page + API: every role except agent (the server answers 403 to agents). */
+export const DEVELOPER_ROLES: UserRole[] = ['admin', 'franchise_owner', 'ceo', 'head_of_sales', 'director', 'sales_manager', 'sales_supervisor', 'team_leader'];
+
 export const isSuperRole = (role?: string | null) => SUPER_ROLES.includes(role as UserRole);
 export const isAssignerRole = (role?: string | null) => ASSIGNER_ROLES.includes(role as UserRole);
 

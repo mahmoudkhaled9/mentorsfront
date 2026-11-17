@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import type { AgentCare, Comment, CrmOption, Deal, Developer, Lead, LeadOptions, LeadSource, Project, Report, Status, Title, User } from '@/types';
-import { apiFetch, errorMessage, getAuthToken, readApiError } from '@/lib/api';
+import { ApiError, apiFetch, errorMessage, getAuthToken, readApiError } from '@/lib/api';
 
 /**
  * Everything the screens show comes from the API (there is no mock/offline data). Each resource loads independently,
@@ -121,6 +121,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const failures: string[] = [];
     results.forEach((result, i) => {
       if (result.status === 'fulfilled') apply(list[i], result.value);
+      // agents have no access to Developers (403 by design): an empty list, not an error banner
+      else if (list[i] === 'developers' && result.reason instanceof ApiError && result.reason.status === 403) apply('developers', []);
       else failures.push(errorMessage(result.reason));
     });
     setLoadError(failures.length ? `Some data could not be loaded: ${[...new Set(failures)].join(' ')}` : '');

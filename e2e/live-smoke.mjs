@@ -18,7 +18,8 @@ const password = process.env.LIVE_PASSWORD
   ?? (process.env.LIVE_PASSWORD_FILE && fs.readFileSync(process.env.LIVE_PASSWORD_FILE, 'utf8').match(/^password=(.+)$/m)?.[1]?.trim());
 if (!password) { console.error('set LIVE_PASSWORD or LIVE_PASSWORD_FILE'); process.exit(2); }
 
-const PAGES = ['/dashboard', '/developers', '/deals', '/leads', '/cold-calls', '/call-history', '/number-pool', '/reports', '/agent-care', '/profile'];
+const PAGES = ['/dashboard', '/deals', '/leads', '/cold-calls', '/call-history', '/number-pool', '/reports', '/agent-care', '/profile'];
+const DEVELOPER_PAGES = ['/developers']; // every role except agent
 const SUPER_PAGES = ['/admin/users', '/admin/departments', '/admin/jobtitles', '/admin/brokers', '/admin/titles', '/admin/statuses', '/admin/sources', '/admin/projects', '/admin/destinations', '/admin/property-types', '/admin/upload-data'];
 const ROLES = [
   { email: 'owner@demo.test', role: 'franchise_owner', super: true, assign: true },
@@ -51,8 +52,9 @@ try {
     await page.click('button[type=submit]');
     await page.waitForURL(/\/dashboard/, { timeout: 15000 }).catch(() => fail(r.role, 'sign-in did not reach the dashboard'));
     await page.waitForLoadState('networkidle').catch(() => {});
-    const allowed = [...PAGES, ...(r.super ? SUPER_PAGES : []), ...(r.assign ? ['/admin/assign'] : [])];
-    const denied = [...(r.super ? [] : SUPER_PAGES), ...(r.assign ? [] : ['/admin/assign'])];
+    const isAgent = r.role === 'agent';
+    const allowed = [...PAGES, ...(isAgent ? [] : DEVELOPER_PAGES), ...(r.super ? SUPER_PAGES : []), ...(r.assign ? ['/admin/assign'] : [])];
+    const denied = [...(isAgent ? DEVELOPER_PAGES : []), ...(r.super ? [] : SUPER_PAGES), ...(r.assign ? [] : ['/admin/assign'])];
     for (const path of allowed) {
       problems.length = 0;
       await page.goto(`${APP}${path}`);

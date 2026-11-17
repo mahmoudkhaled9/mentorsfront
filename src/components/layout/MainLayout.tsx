@@ -34,9 +34,17 @@ import {
   Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ASSIGNER_ROLES, SUPER_ROLES, roleLabel } from '@/lib/roles';
+import { ASSIGNER_ROLES, DEVELOPER_ROLES, SUPER_ROLES, roleLabel } from '@/lib/roles';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import mentorsBanner from '@/assets/mentors-banner.jpg';
+
+/** Brand mark of the UPGRADE CRM SYSTEM (text, so no image carries an old name). */
+function BrandMark({ className }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={cn('flex shrink-0 items-center justify-center rounded-lg bg-gray-900 font-extrabold text-white', className)}>
+      U
+    </span>
+  );
+}
 
 interface NavItem {
   label: string;
@@ -48,7 +56,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { label: 'Developers', path: '/developers', icon: Building2 },
+  { label: 'Developers', path: '/developers', icon: Building2, roles: DEVELOPER_ROLES },
   { label: 'Deals', path: '/deals', icon: Handshake },
   { label: 'Leads', path: '/leads', icon: Users },
   { label: 'Cold Calls', path: '/cold-calls', icon: PhoneCall },
@@ -157,14 +165,10 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex flex-col h-full bg-white border-r border-gray-200 w-64">
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
-        <img
-          src={mentorsBanner}
-          alt="Mentors"
-          className="w-10 h-10 rounded-lg object-cover"
-        />
+        <BrandMark className="w-10 h-10 text-lg" />
         <div>
-          <h1 className="text-lg font-bold text-gray-900">Mentors</h1>
-          <p className="text-xs text-gray-500">CRM System</p>
+          <h1 className="text-lg font-bold text-gray-900">UPGRADE</h1>
+          <p className="text-xs text-gray-500">CRM SYSTEM</p>
         </div>
       </div>
 
@@ -220,7 +224,7 @@ function MobileSidebar() {
       <SheetContent side="left" className="p-0 w-64">
         <SheetHeader className="sr-only">
           <SheetTitle>Navigation menu</SheetTitle>
-          <SheetDescription>Primary navigation for the Mentors CRM.</SheetDescription>
+          <SheetDescription>Primary navigation for the UPGRADE CRM SYSTEM.</SheetDescription>
         </SheetHeader>
         <Sidebar onNavigate={() => setOpen(false)} />
       </SheetContent>
@@ -259,12 +263,8 @@ export default function MainLayout() {
         <div className="flex items-center gap-4 px-4 py-3 bg-white border-b border-gray-200 lg:hidden">
           <MobileSidebar />
           <div className="flex items-center gap-2">
-            <img
-              src={mentorsBanner}
-              alt="Mentors"
-              className="w-8 h-8 rounded-lg object-cover"
-            />
-            <span className="font-bold text-gray-900">Mentors</span>
+            <BrandMark className="w-8 h-8 text-base" />
+            <span className="font-bold text-gray-900">UPGRADE CRM SYSTEM</span>
           </div>
         </div>
 

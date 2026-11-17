@@ -18,7 +18,7 @@ import Reports from '@/pages/Reports';
 import AgentCare from '@/pages/AgentCare';
 import Profile from '@/pages/Profile';
 import NumberPool from '@/pages/NumberPool';
-import { ASSIGNER_ROLES } from '@/lib/roles';
+import { ASSIGNER_ROLES, DEVELOPER_ROLES } from '@/lib/roles';
 
 // Admin Pages
 import AdminUsers from '@/pages/admin/Users';
@@ -62,8 +62,8 @@ function AppRoutes() {
       <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
-        <Route path="developers" element={<Developers />} />
-        <Route path="developers/:id" element={<DeveloperDetails />} />
+        <Route path="developers" element={<PrivateRoute allowedRoles={DEVELOPER_ROLES}><Developers /></PrivateRoute>} />
+        <Route path="developers/:id" element={<PrivateRoute allowedRoles={DEVELOPER_ROLES}><DeveloperDetails /></PrivateRoute>} />
         <Route path="deals" element={<Deals />} />
         <Route path="leads" element={<Leads />} />
         <Route path="leads/:id" element={<LeadDetails />} />

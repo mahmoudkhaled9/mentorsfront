@@ -4,17 +4,18 @@ import { APP, api, closeBrowser, login, tokenFor, withSession } from '../support
 
 after(closeBrowser);
 
-test('branding: UPGRADE CRM SYSTEM on the login page, the browser tab, the sidebar and the dashboard', async (t) => {
+test('branding: Mentors name and logo on the login page, the browser tab and the sidebar', async (t) => {
   await withSession(t, async ({ page }) => {
     await page.goto(`${APP}/login`);
-    assert.equal(await page.title(), 'UPGRADE CRM SYSTEM');
-    await page.getByText('Welcome to UPGRADE CRM SYSTEM').waitFor();
+    assert.equal(await page.title(), 'Mentors CRM System');
+    await page.getByText('Welcome to Mentors').waitFor();
+    await page.getByRole('img', { name: 'Mentors' }).waitFor();
     await login(page, 'admin');
-    await page.getByRole('heading', { name: 'UPGRADE' }).first().waitFor();
-    await page.getByText('CRM SYSTEM', { exact: true }).first().waitFor();
-    await page.getByText("Here's what's happening in UPGRADE CRM SYSTEM today").waitFor();
+    await page.getByRole('heading', { name: 'Mentors' }).first().waitFor();
+    await page.getByText('CRM System', { exact: true }).first().waitFor();
+    assert.ok(await page.getByRole('img', { name: 'Mentors' }).count() >= 1, 'the Mentors logo in the sidebar');
     const text = await page.locator('body').innerText();
-    assert.ok(!/\bMentors\b/.test(text), 'the old name is not shown anywhere on the page');
+    assert.ok(!/UPGRADE/.test(text), 'the UPGRADE name is gone');
   });
 });
 
